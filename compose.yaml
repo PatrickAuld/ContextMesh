@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: local-postgres-password
+      POSTGRES_DB: contextmesh
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/development-db.sql:/docker-entrypoint-initdb.d/10-contextmesh.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d contextmesh"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: postgres://cm_owner:local-owner-password@postgres:5432/contextmesh
+    depends_on:
+      postgres:
+        condition: service_healthy
+  grant:
+    image: postgres:16
+    environment:
+      PGPASSWORD: local-owner-password
+    volumes:
+      - ./scripts/grants.sql:/grants.sql:ro
+    entrypoint: ["psql", "-h", "postgres", "-U", "cm_owner", "-d", "contextmesh", "-v", "ON_ERROR_STOP=1", "-f", "/grants.sql"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  contextmesh:
+    build: .
+    command: ["run", "--listen", "0.0.0.0:8787", "--config", "/etc/contextmesh/config.json", "--allow-dev-auth"]
+    environment:
+      DATABASE_URL: postgres://cm_runtime:local-runtime-password@postgres:5432/contextmesh
+    volumes:
+      - ./config/development.json:/etc/contextmesh/config.json:ro
+    ports:
+      - "127.0.0.1:8787:8787"
+    restart: unless-stopped
+    depends_on:
+      grant:
+        condition: service_completed_successfully
+volumes:
+  postgres-data:

@@ -1,0 +1,6 @@
+.git
+.env
+config/local.json
+target
+site
+*.zip

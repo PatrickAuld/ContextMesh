@@ -1,0 +1,58 @@
+name: Rust system tests
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['site/**']
+  pull_request:
+    paths-ignore: ['site/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  black-box:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: contextmesh
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://cm_runtime:runtime_test_password@localhost:5432/contextmesh
+      MIGRATION_DATABASE_URL: postgres://cm_owner:owner_test_password@localhost:5432/contextmesh
+      CONTEXTMESH_TEST_LOG_DIR: /tmp/contextmesh-test-logs
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo build --locked
+      - name: Create isolated database roles
+        run: |
+          psql postgres://postgres:postgres@localhost:5432/contextmesh -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE cm_owner LOGIN PASSWORD 'owner_test_password' NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE cm_runtime LOGIN PASSWORD 'runtime_test_password' NOSUPERUSER NOBYPASSRLS;
+          ALTER DATABASE contextmesh OWNER TO cm_owner;
+          ALTER SCHEMA public OWNER TO cm_owner;
+          SQL
+          target/debug/contextmesh migrate --database-url "$MIGRATION_DATABASE_URL"
+          psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/grants.sql
+      - name: Exercise real processes and PostgreSQL
+        run: python3 tests/e2e.py
+      - name: Upload process logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: system-test-logs
+          path: /tmp/contextmesh-test-logs/*.log
+          retention-days: 3
