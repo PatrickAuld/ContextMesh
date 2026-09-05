@@ -153,3 +153,24 @@ pub async fn retry(
     tx.commit().await?;
     Ok(Json(json!({"retried":count})))
 }
+
+#[derive(Deserialize)]
+pub struct EdgeQuery {
+    #[serde(default)]
+    pub entity: String,
+}
+pub async fn edges(
+    State(app): State<App>,
+    Extension(who): Extension<Identity>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<EdgeQuery>,
+) -> Result<Json<Value>> {
+    if q.entity.len() > 256 {
+        return Err(Error::bad("invalid_entity"));
+    }
+    let mut tx = db::begin(&app.pool, who.tenant).await?;
+    let rows=sqlx::query("SELECT x.from_entity,x.relation,x.to_entity,x.claim_id,c.event_id FROM edges x JOIN claims c ON c.tenant_id=x.tenant_id AND c.id=x.claim_id JOIN events e ON e.tenant_id=c.tenant_id AND e.id=c.event_id WHERE x.tenant_id=$1 AND x.graph_id=$2 AND ($3='' OR x.from_entity=$3 OR x.to_entity=$3) AND e.current AND NOT e.redacted AND (e.classification='internal' OR $4 OR e.read_groups && $5) ORDER BY x.from_entity,x.relation,x.to_entity,x.claim_id LIMIT 200").bind(who.tenant).bind(id).bind(&q.entity).bind(who.admin).bind(&who.groups).fetch_all(&mut *tx).await?;
+    Ok(Json(
+        json!({"edges":rows.iter().map(|r|json!({"from":r.get::<String,_>("from_entity"),"relation":r.get::<String,_>("relation"),"to":r.get::<String,_>("to_entity"),"claim_id":r.get::<Uuid,_>("claim_id"),"event_id":r.get::<Uuid,_>("event_id")})).collect::<Vec<_>>(),"truncated":rows.len()==200}),
+    ))
+}

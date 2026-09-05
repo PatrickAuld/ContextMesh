@@ -19,6 +19,7 @@ All `/v1/` routes require `Authorization: Bearer TOKEN`. Tenant, person, groups,
 | GET `/v1/receipts/{id}` | none | Owner or originating person; references filtered by current visibility |
 | GET `/v1/graphs` | none | Graph versions, active flag, state, queue counts; configuration only for owners |
 | POST `/v1/graphs` | `name`, `config` | Owner rebuild from current evidence |
+| GET `/v1/graphs/{id}/edges` | Optional `entity` query parameter | Up to 200 currently readable, sourced edges; `truncated` signals the bound |
 | POST `/v1/graphs/{id}/promote` | `{}` | Owner atomic active-graph switch once caught up |
 | POST `/v1/graphs/{id}/archive` | `{}` | Owner stops maintenance; active graph cannot be archived |
 | POST `/v1/graphs/{id}/retry` | `{}` | Owner retries failed jobs |

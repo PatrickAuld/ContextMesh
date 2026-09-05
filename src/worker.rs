@@ -32,6 +32,8 @@ async fn process(app: &App, tenant: Uuid) -> Result<bool> {
     let mut tx = db::begin(&app.pool, tenant).await?;
     backfill(&mut tx, tenant).await?;
     sqlx::query("UPDATE graphs SET state='ready' WHERE tenant_id=$1 AND state='building' AND backfill_cursor>=backfill_target AND NOT EXISTS(SELECT 1 FROM jobs WHERE jobs.tenant_id=graphs.tenant_id AND jobs.graph_id=graphs.id AND state IN ('pending','running','failed'))").bind(tenant).execute(&mut *tx).await?;
+    tx.commit().await?;
+    let mut tx = db::begin(&app.pool, tenant).await?;
     sqlx::query("UPDATE jobs SET state='failed',error_code='lease_exhausted' WHERE tenant_id=$1 AND state='running' AND lease_until<now() AND attempts>=5").bind(tenant).execute(&mut *tx).await?;
     let lease = Uuid::new_v4();
     let row=sqlx::query("UPDATE jobs SET state='running',attempts=attempts+1,lease_id=$2,lease_until=now()+interval '60 seconds' WHERE tenant_id=$1 AND id=(SELECT id FROM jobs WHERE tenant_id=$1 AND attempts<5 AND ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now())) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,graph_id,event_id")
@@ -67,9 +69,9 @@ async fn process(app: &App, tenant: Uuid) -> Result<bool> {
     let result = app.gateway.curate(&body, &context, &config).await;
     let mut tx = db::begin(&app.pool, tenant).await?;
     db::lock(&mut tx, tenant).await?;
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs j JOIN events e ON e.tenant_id=j.tenant_id AND e.id=j.event_id JOIN graphs g ON g.tenant_id=j.tenant_id AND g.id=j.graph_id WHERE j.tenant_id=$1 AND j.id=$2 AND j.lease_id=$3 AND j.state='running' AND j.lease_until>now() AND e.current AND NOT e.redacted AND g.state<>'archived')")
-        .bind(tenant).bind(job).bind(lease).fetch_one(&mut *tx).await?;
-    if !valid {
+    let valid:Option<Uuid>=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN events e ON e.tenant_id=j.tenant_id AND e.id=j.event_id JOIN graphs g ON g.tenant_id=j.tenant_id AND g.id=j.graph_id WHERE j.tenant_id=$1 AND j.id=$2 AND j.lease_id=$3 AND j.state='running' AND j.lease_until>now() AND e.current AND NOT e.redacted AND g.state<>'archived' FOR UPDATE OF j")
+        .bind(tenant).bind(job).bind(lease).fetch_optional(&mut *tx).await?;
+    if valid.is_none() {
         return Ok(true);
     }
     let result = result.and_then(|claims| {

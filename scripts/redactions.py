@@ -15,11 +15,17 @@ args = parser.parse_args()
 base = os.environ.get('CONTEXTMESH_URL', 'http://127.0.0.1:8787').rstrip('/')
 token = os.environ['CONTEXTMESH_TOKEN']
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+opener = urllib.request.build_opener(NoRedirect)
+
 
 def request(path, post=False):
     req = urllib.request.Request(base + path, data=b'{}' if post else None,
                                  headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=60) as response:
+    with opener.open(req, timeout=60) as response:
         return json.load(response)
 
 

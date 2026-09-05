@@ -56,3 +56,42 @@ jobs:
           name: system-test-logs
           path: /tmp/contextmesh-test-logs/*.log
           retention-days: 3
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and start the documented deployment
+        run: |
+          docker compose up --build -d
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/ready; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8787/ready
+      - name: Verify capture and retrieval through the container
+        env:
+          TOKEN: local-person-token-change-before-sharing
+        run: |
+          curl -fsS http://127.0.0.1:8787/v1/events \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"source":"compose","external_id":"smoke","revision":1,"text":"Container persistence canary","context":{"entities":["test:Container"]}}'
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          url='http://127.0.0.1:8787/v1/query'
+          for _ in range(60):
+              req=urllib.request.Request(url,data=json.dumps({'query':'Container persistence canary'}).encode(),headers={'Authorization':'Bearer '+os.environ['TOKEN'],'Content-Type':'application/json'})
+              with urllib.request.urlopen(req) as response:
+                  packet=json.load(response)
+              if any('Container persistence canary' in m['text'] for m in packet['memories']):
+                  break
+              time.sleep(.5)
+          else:
+              raise SystemExit('Container curation did not complete')
+          PY
+      - name: Deployment logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop deployment
+        if: always()
+        run: docker compose down -v

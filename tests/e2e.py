@@ -472,6 +472,20 @@ class SystemTests(unittest.TestCase):
         result = subprocess.run(['python3', helper, 'apply', str(path), '--execute'], env=env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_17_graph_edges_keep_access_and_redaction_lineage(self):
+        event = self.insert('Directed relation source', context={'entities': ['model:Connected', 'library:Connected']})
+        self.wait_memory('Directed relation source')
+        graph = self.find('Directed relation source')['graph_id']
+        path = '/v1/graphs/' + graph + '/edges?entity=model%3AConnected'
+        edges = self.call(path)['edges']
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0]['event_id'], event)
+        self.call('/v1/events/' + event + '/classification', {'classification': 'restricted', 'read_groups': ['finance']}, ADMIN)
+        self.assertEqual(self.call(path)['edges'], [])
+        self.assertEqual(len(self.call(path, token=FINANCE)['edges']), 1)
+        self.call('/v1/events/' + event + '/redact', {}, ADMIN)
+        self.assertEqual(self.call(path, token=ADMIN)['edges'], [])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -136,6 +136,7 @@ pub fn router(app: App) -> Router {
         .route("/v1/events/{id}/classification", post(events::classify))
         .route("/v1/graphs", get(graphs::list).post(graphs::create))
         .route("/v1/graphs/{id}/promote", post(graphs::promote))
+        .route("/v1/graphs/{id}/edges", get(graphs::edges))
         .route("/v1/graphs/{id}/archive", post(graphs::archive))
         .route("/v1/graphs/{id}/retry", post(graphs::retry))
         .route("/v1/policies", get(policy::list).post(policy::create))

@@ -118,7 +118,11 @@ impl Client {
                 .await;
             match response {
                 Ok(r) if r.status().is_success() => {
-                    let _ = std::fs::remove_file(&path);
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => return Err(e.into()),
+                    }
                     summary.sent += 1;
                 }
                 Ok(r) if matches!(r.status().as_u16(), 400 | 403 | 404 | 409 | 410 | 413 | 422) => {
