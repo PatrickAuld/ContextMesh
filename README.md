@@ -68,6 +68,7 @@ Read the [documentation on the ContextMesh site](https://patrickauld.github.io/C
 - [API and integration guide](docs/api.md): endpoint contracts, delegated agents, Rust client, MCP, and capture/retrieval hooks.
 - [Operations](docs/operations.md): Okta setup, graph rebuilds, audit, redaction, release approval, recovery, and deployment.
 - [System validation](docs/testing.md): black-box scenarios and running the suite.
+- [Evaluation strategy](docs/evaluation.md): public benchmarks, first-party eval criteria, baselines, metrics, and release gates.
 - [Marketing site](https://patrickauld.github.io/ContextMesh/).
 
 ## Design boundaries
