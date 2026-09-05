@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101710">
+  <meta name="description" content="$description">
+  <meta property="og:title" content="$title · ContextMesh Docs">
+  <meta property="og:description" content="$description">
+  <meta property="og:type" content="website">
+  <link rel="canonical" href="$canonical">
+  <link rel="icon" type="image/svg+xml" href="${root}favicon.svg">
+  <link rel="stylesheet" href="${root}styles.css">
+  <link rel="stylesheet" href="${root}docs.css">
+  <title>$title · ContextMesh Docs</title>
+</head>
+<body class="docs-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="header">
+    <nav class="nav wrap" aria-label="Main navigation">
+      <a class="wordmark" href="$root" aria-label="ContextMesh home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 7h20L16 25 6 7Zm0 0 10 6L26 7M16 13v12"/><circle cx="6" cy="7" r="3"/><circle cx="26" cy="7" r="3"/><circle cx="16" cy="13" r="3"/><circle cx="16" cy="25" r="3"/></svg>ContextMesh</a>
+      <div class="nav-links"><a href="${root}#patterns">Use cases</a><a href="${root}#architecture">Architecture</a><a href="${root}docs/" aria-current="true">Docs</a></div>
+      <a class="nav-github" href="https://github.com/PatrickAuld/ContextMesh">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <div class="docs-layout wrap">
+    <aside class="docs-sidebar">
+      <p class="eyebrow">CONTEXTMESH / DOCS</p>
+      <nav aria-label="Documentation">$sidebar</nav>
+      <div class="sidebar-note"><span class="status-dot" aria-hidden="true"></span> Rust + PostgreSQL<p>One service to start.<br>Room to grow.</p></div>
+    </aside>
+    <main id="main" class="docs-main">
+      <div class="docs-breadcrumb"><a href="${root}docs/">Docs</a><span aria-hidden="true">/</span><span>$title</span></div>
+      <article class="prose">$body</article>
+      <nav class="docs-pagination" aria-label="Adjacent guides">$pagination</nav>
+      <a class="source-link" href="$source_url">Edit this page on GitHub <span aria-hidden="true">↗</span></a>
+    </main>
+    <aside class="docs-toc" aria-label="On this page"><p class="eyebrow">ON THIS PAGE</p>$toc</aside>
+  </div>
+  <footer class="footer wrap"><a class="footer-brand" href="$root">ContextMesh</a><p>Shared memory. Context that carries forward.</p><a href="https://github.com/PatrickAuld/ContextMesh">GitHub <span aria-hidden="true">↗</span></a></footer>
+</body>
+</html>

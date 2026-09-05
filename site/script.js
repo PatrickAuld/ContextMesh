@@ -42,7 +42,7 @@ if (navigator.clipboard && window.isSecureContext) {
     const status = document.querySelector(".copy-status");
     try {
       await navigator.clipboard.writeText(document.getElementById("sdk-code").textContent);
-      status.textContent = "Python example copied.";
+      status.textContent = "HTTP example copied.";
       copyButton.textContent = "Copied";
       setTimeout(() => { copyButton.textContent = "Copy"; status.textContent = ""; }, 2500);
     } catch {

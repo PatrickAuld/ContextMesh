@@ -62,6 +62,8 @@ export DATABASE_URL=postgres://cm_runtime:password@localhost/contextmesh
 
 ## Operations and integrations
 
+Read the [documentation on the ContextMesh site](https://patrickauld.github.io/ContextMesh/docs/).
+
 - [Architecture](docs/architecture.md): evidence, incremental graphs, inference, isolation, and scaling.
 - [API and integration guide](docs/api.md): endpoint contracts, delegated agents, Rust client, MCP, and capture/retrieval hooks.
 - [Operations](docs/operations.md): Okta setup, graph rebuilds, audit, redaction, release approval, recovery, and deployment.

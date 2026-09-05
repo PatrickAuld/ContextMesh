@@ -1,21 +1,33 @@
-# ContextMesh marketing site
+# ContextMesh marketing and documentation site
 
-Static HTML, CSS, and JavaScript. No package installation or build is required.
+Static HTML and CSS, with progressive enhancement for the homepage tabs and clipboard. Documentation pages require no JavaScript.
 
-From the repository root, preview with:
+## Build
+
+From the repository root, with Python 3.10+:
+
+```sh
+python3 -m pip install -r scripts/requirements-site.txt
+python3 scripts/build_site.py
+```
+
+The build renders the Markdown pages registered in `scripts/build_site.py` into `site/docs/`, then checks every local HTML link, asset path, anchor, and main heading. Generated documentation is ignored by Git; edit the Markdown sources, not the generated HTML. The shared template is `scripts/templates/docs.html`, navigation metadata is in the generator, and documentation styles are in `site/docs.css`.
+
+To view the built site locally:
 
 ```sh
 python3 -m http.server 8000 --directory site
 ```
 
-Open `http://localhost:8000`. All assets use relative paths so the site also works under the GitHub Pages `/ContextMesh/` project path. Without JavaScript, all usage patterns remain visible. With JavaScript, patterns use keyboard-accessible tabs; the SDK example has a clipboard action on secure origins.
+Open `http://localhost:8000`. Assets and links use relative paths so the same output works at the GitHub Pages `/ContextMesh/` project path. Keyboard navigation, page links, and code samples remain usable without JavaScript.
 
 ## Publishing
 
-In repository **Settings → Pages → Build and deployment**, select **GitHub Actions** as the source. The `Deploy marketing site` workflow publishes `site/` after changes to that directory on `main`, or when manually dispatched. Expected URL: <https://patrickauld.github.io/ContextMesh/>.
+In repository **Settings → Pages → Build and deployment**, select **GitHub Actions** as the source. The `Deploy marketing site` workflow builds and checks the site on relevant pull requests. On `main`, it builds and deploys changes to the site, Markdown sources, or generator. It can also be manually dispatched.
 
-Only `site/` is uploaded. The service, credentials, and working data are never part of the deployment artifact.
+- Marketing: <https://patrickauld.github.io/ContextMesh/>
+- Documentation: <https://patrickauld.github.io/ContextMesh/docs/>
 
-## Content
+Only `site/` is uploaded; service source, working data, configuration, and generator dependencies are outside the published artifact.
 
-`index.html` contains the product positioning, usage patterns, high-level architecture, and SDK integration example. It describes the pilot foundation and distinguishes illustrative workflows from live demonstrations. Keep integration and maturity claims aligned with the implementation as it evolves.
+Keep product positioning and examples in `index.html` aligned with the service as it evolves. Add documentation pages to the generator's `PAGES` list to include them in navigation and the publication build.

@@ -20,7 +20,7 @@
   <header class="header">
     <nav class="nav wrap" aria-label="Main navigation">
       <a class="wordmark" href="#" aria-label="ContextMesh home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 7h20L16 25 6 7Zm0 0 10 6L26 7M16 13v12"/><circle cx="6" cy="7" r="3"/><circle cx="26" cy="7" r="3"/><circle cx="16" cy="13" r="3"/><circle cx="16" cy="25" r="3"/></svg>ContextMesh</a>
-      <div class="nav-links"><a href="#patterns">Use cases</a><a href="#architecture">Architecture</a><a href="#usage">Usage</a></div>
+      <div class="nav-links"><a href="#patterns">Use cases</a><a href="#architecture">Architecture</a><a href="#usage">Usage</a><a href="./docs/">Docs</a></div>
       <a class="nav-github" href="https://github.com/PatrickAuld/ContextMesh">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
@@ -94,7 +94,7 @@
           <article><div class="stage-number">01</div><div><h3>Capture the work</h3><p>Harness hooks, explicit inserts, and source adapters send identity-bound events.</p><span class="stage-meta">Conversations · Tool results · Outcomes</span></div></article>
           <article><div class="stage-number">02</div><div><h3>Preserve the evidence</h3><p>An append-only event log retains source history. Curation decisions are recorded for replay.</p><span class="stage-meta">Provenance · Intent · Context</span></div></article>
           <article><div class="stage-number">03</div><div><h3>Curate connected knowledge</h3><p>Bounded workers propose sourced claims. Validation checks identity, source quotes, and structure before commit.</p><span class="stage-meta">Claims · Entity associations · Wiki views</span></div></article>
-          <article><div class="stage-number">04</div><div><h3>Compile working context</h3><p>Search, expand associations, inspect evidence, and optionally query external indexes. Return a cited memory packet.</p><span class="stage-meta">Guidance · Conflicts · Revalidation · Receipt</span></div></article>
+          <article><div class="stage-number">04</div><div><h3>Compile working context</h3><p>Search, expand associations, inspect evidence, and return a cited memory packet. PostgreSQL stores the evidence and graph projections.</p><span class="stage-meta">Guidance · Conflicts · Revalidation · Receipt</span></div></article>
           <div class="feedback-line"><span aria-hidden="true">↳</span> Agent actions and evaluated outcomes become new evidence.</div>
         </div>
         <aside class="claim-card"><span class="index">THE UNIT OF MEMORY</span><h3>A claim.<br>With its conditions.</h3><p class="claim-quote">“Use matched cohorts when comparing exposure.”</p><dl><div><dt>Source</dt><dd>Who said it, and where</dd></div><div><dt>Intent</dt><dd>Guidance, evidence, or an observation</dd></div><div><dt>Applicability</dt><dd>The tasks and entities it concerns</dd></div><div><dt>Dependencies</dt><dd>The versions it relies on</dd></div><div><dt>History</dt><dd>Validity, corrections, and conflicts</dd></div></dl><p class="claim-footer">Relevance and authority are independent. Repetition alone doesn’t make a claim policy.</p></aside>
@@ -103,34 +103,38 @@
 
     <section id="usage" class="usage dark section">
       <div class="wrap usage-grid">
-        <div><p class="eyebrow">FITS AROUND YOUR AGENTS</p><h2>Capture in the background.<br><em>Retrieve before the work.</em></h2><p class="usage-intro">Use the HTTP API, Python SDK, or MCP tools. Connect harness hooks when you want retrieval to happen at the right moment automatically.</p><ol class="usage-steps"><li><span>1</span><div><h3>Connect a source</h3><p>Bind a client to an identity and supply stable project, team, and entity context.</p></div></li><li><span>2</span><div><h3>Let curation run</h3><p>Events are captured durably. A configured model proposes knowledge asynchronously.</p></div></li><li><span>3</span><div><h3>Retrieve and inject</h3><p>Before a relevant agent step, request a memory packet and add its sourced context to the model request.</p></div></li></ol></div>
-        <div class="code-column"><div class="code-window"><div class="code-heading"><span>Python SDK · integration pattern</span><button type="button" class="copy-button" aria-label="Copy Python example" hidden>Copy</button></div><pre tabindex="0" aria-label="Python SDK example"><code id="sdk-code"><span class="token-keyword">import</span> os
-<span class="token-keyword">from</span> contextmesh.client <span class="token-keyword">import</span> DurableClient
+        <div><p class="eyebrow">FITS AROUND YOUR AGENTS</p><h2>Capture in the background.<br><em>Retrieve before the work.</em></h2><p class="usage-intro">Use the HTTP API, Rust client, or MCP tools. Connect harness hooks when you want retrieval to happen at the right moment automatically.</p><ol class="usage-steps"><li><span>1</span><div><h3>Connect a source</h3><p>Bind a client to an identity and supply stable project, team, and entity context.</p></div></li><li><span>2</span><div><h3>Let curation run</h3><p>Events are captured durably. Workers derive knowledge asynchronously, using an inference gateway when configured.</p></div></li><li><span>3</span><div><h3>Retrieve and inject</h3><p>Before a relevant agent step, request a memory packet and add its sourced context to the model request.</p></div></li></ol></div>
+        <div class="code-column"><div class="code-window"><div class="code-heading"><span>HTTP API · capture + retrieve</span><button type="button" class="copy-button" aria-label="Copy HTTP example" hidden>Copy</button></div><pre tabindex="0" aria-label="HTTP integration example"><code id="sdk-code"># Set CONTEXTMESH_TOKEN to your delegated token.
+export CONTEXTMESH_URL=http://127.0.0.1:8787
 
-memory = DurableClient(
-    <span class="token-string">"http://127.0.0.1:8787"</span>,
-    os.environ[<span class="token-string">"CONTEXTMESH_TOKEN"</span>],
-    {<span class="token-string">"team"</span>: <span class="token-string">"discovery"</span>},
-)
+# Capture evidence with a stable source identity.
+curl -fsS &quot;$CONTEXTMESH_URL/v1/events&quot; \
+  -H &quot;Authorization: Bearer $CONTEXTMESH_TOKEN&quot; \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{
+    &quot;source&quot;: &quot;harness&quot;,
+    &quot;external_id&quot;: &quot;message-1&quot;,
+    &quot;revision&quot;: 1,
+    &quot;text&quot;: &quot;Compare exposure within matched cohorts.&quot;,
+    &quot;context&quot;: {&quot;entities&quot;: [&quot;type:Exposure&quot;]}
+  }&#x27;
 
-memory.remember(
-    <span class="token-string">"Compare exposure within matched cohorts."</span>,
-    source=<span class="token-string">"team-guidance"</span>,
-)
-
-packet = memory.before_step(
-    <span class="token-string">"Build a regression investigator"</span>,
-    entities=[<span class="token-string">"type:Exposure"</span>],
-)
-context = packet[<span class="token-string">"context_text"</span>]</code></pre><div class="code-footer">Insert <code>context</code> as sourced data in the next model request.</div></div><p class="code-note">Assumes a running service and configured model. Curation is asynchronous: an immediate read may not include the new event.</p><div class="integration-list"><span>HTTP + Python SDK</span><span>MCP tools</span><span>Claude hooks</span><span>Pi extension</span><span>Slack adapter</span><span>Glean federation</span></div><p class="integration-note">Reference adapters have different capture and retrieval coverage. MCP provides tools; automatic use depends on the host integration.</p><p class="copy-status" role="status" aria-live="polite"></p></div>
+# Retrieve before the next relevant agent step.
+curl -fsS &quot;$CONTEXTMESH_URL/v1/query&quot; \
+  -H &quot;Authorization: Bearer $CONTEXTMESH_TOKEN&quot; \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{
+    &quot;query&quot;: &quot;Build an exposure regression investigator&quot;,
+    &quot;entities&quot;: [&quot;type:Exposure&quot;]
+  }&#x27;</code></pre><div class="code-footer">Insert <code>context_text</code> as sourced data in the next model request.</div></div><p class="code-note">Assumes a running service and delegated token. Curation is asynchronous: an immediate read may not include the new event.</p><div class="integration-list"><span>HTTP API</span><span>Rust client</span><span>MCP tools</span><span>Durable outbox</span><span>Operational CLI</span></div><p class="integration-note">MCP provides tools; automatic use depends on the host integration. <a href="./docs/api/">Read the integration guide ↗</a></p><p class="copy-status" role="status" aria-live="polite"></p></div>
       </div>
     </section>
 
     <section class="closing section wrap">
-      <div class="pilot-note"><span class="pill">PROJECT STATUS · PILOT</span><p>A runnable, single-node reference foundation. Live harness compatibility, real-model extraction quality, and retrieval at company scale still need validation.</p></div>
-      <div class="closing-row"><h2>Give the next agent<br>a better starting point.</h2><a class="button primary" href="https://github.com/PatrickAuld/ContextMesh">Explore ContextMesh <span aria-hidden="true">↗</span></a></div>
+      <div class="pilot-note"><span class="pill">PROJECT STATUS · PILOT</span><p>A multi-tenant Rust service backed by PostgreSQL. Start with one process, then scale API replicas and inference workers independently. Live harness compatibility, real-model extraction quality, and retrieval at company scale still need validation.</p></div>
+      <div class="closing-row"><h2>Give the next agent<br>a better starting point.</h2><a class="button primary" href="./docs/quickstart/">Get started <span aria-hidden="true">↗</span></a></div>
     </section>
   </main>
-  <footer class="footer wrap"><a class="footer-brand" href="#">ContextMesh</a><p>Shared memory. Context that carries forward.</p><a href="https://github.com/PatrickAuld/ContextMesh">GitHub <span aria-hidden="true">↗</span></a></footer>
+  <footer class="footer wrap"><a class="footer-brand" href="#">ContextMesh</a><p>Shared memory. Context that carries forward.</p><a href="./docs/">Documentation</a><a href="https://github.com/PatrickAuld/ContextMesh">GitHub <span aria-hidden="true">↗</span></a></footer>
 </body>
 </html>
