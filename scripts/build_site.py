@@ -25,6 +25,7 @@ PAGES = [
     ("docs/api.md", "docs/api", "API & integrations", "Connect harnesses through HTTP, the Rust client, and MCP."),
     ("docs/operations.md", "docs/operations", "Operations", "Configure identity and inference, rebuild graphs, audit sources, and redact information."),
     ("docs/testing.md", "docs/testing", "System validation", "Validate ContextMesh with black-box tests against real processes and PostgreSQL."),
+    ("docs/evaluation.md", "docs/evaluation", "Evaluation strategy", "Benchmark ContextMesh memory quality, safety, efficiency, and auditability."),
 ]
 OUTPUTS = {source: directory for source, directory, *_ in PAGES}
 
