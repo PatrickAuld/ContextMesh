@@ -11,6 +11,7 @@ Start with one Rust process and PostgreSQL. Add API replicas and inference worke
 - [API and integrations](api.md) — connect a harness through HTTP, the Rust client, or MCP.
 - [Operations](operations.md) — configure Okta and inference, rebuild graphs, trace provenance, and redact sources.
 - [System validation](testing.md) — run black-box tests against real processes and PostgreSQL.
+- [Evaluation strategy](evaluation.md) — compare memory systems and define quality, safety, efficiency, and auditability gates.
 
 ## The working loop
 
@@ -41,4 +42,4 @@ People authenticate through Okta; agents receive short-lived delegated identitie
 
 ## Before a team rollout
 
-Read the [operator runbook](operations.md) for production identity, gateway configuration, database roles, and recovery. The local Compose stack is a development environment. Real-model quality and company-wide throughput need evaluation against your own workloads; see [validation boundaries](testing.md).
+Read the [operator runbook](operations.md) for production identity, gateway configuration, database roles, and recovery. The local Compose stack is a development environment. Real-model quality and company-wide throughput need evaluation against your own workloads; see the [evaluation strategy](evaluation.md) and [validation boundaries](testing.md).
