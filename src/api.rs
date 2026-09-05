@@ -130,7 +130,7 @@ pub fn router(app: App) -> Router {
             "/v1/identity",
             get(|axum::Extension(who): axum::Extension<Identity>| async move { Json(who) }),
         )
-        .route("/v1/events", post(events::insert))
+        .route("/v1/events", get(events::list).post(events::insert))
         .route("/v1/events/{id}", get(events::get))
         .route("/v1/events/{id}/redact", post(events::redact))
         .route("/v1/events/{id}/classification", post(events::classify))
@@ -146,6 +146,8 @@ pub fn router(app: App) -> Router {
         .route("/v1/audit", get(ops::audit))
         .route("/v1/lineage/{id}", get(ops::lineage))
         .route("/v1/status", get(ops::status))
+        .route("/v1/metrics", get(ops::metrics))
+        .route("/v1/redactions", get(ops::redactions))
         .route("/v1/jobs", get(ops::jobs))
         .route("/v1/receipts/{id}", get(query::receipt))
         .merge(queries)

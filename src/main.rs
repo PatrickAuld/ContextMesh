@@ -33,12 +33,27 @@ enum Command {
         #[arg(long)]
         body: Option<std::path::PathBuf>,
     },
+    Capture {
+        #[command(flatten)]
+        connection: Connection,
+        file: std::path::PathBuf,
+    },
+    Flush(Connection),
     Mcp {
         #[arg(long, env = "CONTEXTMESH_URL", default_value = "http://127.0.0.1:8787")]
         url: String,
         #[arg(long, env = "CONTEXTMESH_TOKEN")]
         token: String,
     },
+}
+#[derive(clap::Args)]
+struct Connection {
+    #[arg(long, env = "CONTEXTMESH_URL", default_value = "http://127.0.0.1:8787")]
+    url: String,
+    #[arg(long, env = "CONTEXTMESH_TOKEN")]
+    token: String,
+    #[arg(long, env = "CONTEXTMESH_OUTBOX")]
+    outbox: std::path::PathBuf,
 }
 #[derive(clap::Args)]
 struct Runtime {
@@ -103,6 +118,17 @@ async fn main() -> anyhow::Result<()> {
             let body = response.text().await?;
             println!("{body}");
             anyhow::ensure!(status.is_success(), "request failed: {status}");
+        }
+        Command::Capture { connection, file } => {
+            let client = contextmesh::client::Client::new(&connection.url, &connection.token)?
+                .with_outbox(&connection.outbox)?;
+            let event: contextmesh::events::Insert = serde_json::from_slice(&std::fs::read(file)?)?;
+            println!("{}", client.remember(&event).await?);
+        }
+        Command::Flush(connection) => {
+            let client = contextmesh::client::Client::new(&connection.url, &connection.token)?
+                .with_outbox(&connection.outbox)?;
+            println!("{}", serde_json::to_string(&client.flush().await?)?);
         }
         Command::Mcp { url, token } => mcp(url, token).await?,
     }

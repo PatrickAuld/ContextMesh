@@ -37,6 +37,9 @@ services:
     command: ["run", "--listen", "0.0.0.0:8787", "--config", "/etc/contextmesh/config.json", "--allow-dev-auth"]
     environment:
       DATABASE_URL: postgres://cm_runtime:local-runtime-password@postgres:5432/contextmesh
+      CONTEXTMESH_MODEL_URL: ${CONTEXTMESH_MODEL_URL:-}
+      CONTEXTMESH_MODEL: ${CONTEXTMESH_MODEL:-}
+      CONTEXTMESH_MODEL_KEY: ${CONTEXTMESH_MODEL_KEY:-}
     volumes:
       - ./config/development.json:/etc/contextmesh/config.json:ro
     ports:

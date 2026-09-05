@@ -145,7 +145,7 @@ pub async fn execute(app: &App, who: &Identity, q: Query) -> Result<Value> {
             }
         }
     }
-    let (guidance, policies) = if let Some(purpose) = &q.purpose {
+    let (guidance, evaluated_policies) = if let Some(purpose) = &q.purpose {
         policy::evaluate(app, who, purpose, &q.query).await?
     } else {
         (vec![], vec![])
@@ -161,11 +161,13 @@ pub async fn execute(app: &App, who: &Identity, q: Query) -> Result<Value> {
         selected.push(v);
     }
     let mut released = Vec::new();
-    for text in guidance {
+    let mut policies = Vec::new();
+    for (text, policy) in guidance.into_iter().zip(evaluated_policies) {
         let size = text.chars().count();
         if consumed + size <= q.max_chars {
             consumed += size;
             released.push(text);
+            policies.push(policy);
         }
     }
     let mut slots: BTreeMap<String, Vec<String>> = BTreeMap::new();

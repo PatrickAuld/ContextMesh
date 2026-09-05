@@ -16,9 +16,15 @@ impl Gateway {
                 .timeout(Duration::from_secs(40))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
-            url: std::env::var("CONTEXTMESH_MODEL_URL").ok(),
-            key: std::env::var("CONTEXTMESH_MODEL_KEY").ok(),
-            model: std::env::var("CONTEXTMESH_MODEL").ok(),
+            url: std::env::var("CONTEXTMESH_MODEL_URL")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            key: std::env::var("CONTEXTMESH_MODEL_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            model: std::env::var("CONTEXTMESH_MODEL")
+                .ok()
+                .filter(|s| !s.is_empty()),
         })
     }
     pub fn configured(&self) -> bool {

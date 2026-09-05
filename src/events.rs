@@ -250,3 +250,34 @@ pub async fn redact(
     tx.commit().await?;
     Ok(Json(json!({"redacted_revisions":ids.len()})))
 }
+
+#[derive(Deserialize)]
+pub struct List {
+    #[serde(default)]
+    pub after: i64,
+    #[serde(default)]
+    pub search: String,
+}
+pub async fn list(
+    State(app): State<App>,
+    Extension(who): Extension<Identity>,
+    axum::extract::Query(q): axum::extract::Query<List>,
+) -> Result<Json<Value>> {
+    who.require_admin()?;
+    if q.search.len() > 2000 {
+        return Err(Error::bad("search_limit"));
+    }
+    let mut tx = db::begin(&app.pool, who.tenant).await?;
+    let rows=sqlx::query("SELECT id,sequence,source,external_id,revision,actor,classification,left(body,512) AS preview FROM events WHERE tenant_id=$1 AND current AND NOT redacted AND sequence>$2 AND ($3='' OR to_tsvector('english',coalesce(body,'')) @@ websearch_to_tsquery('english',$3)) ORDER BY sequence LIMIT 100").bind(who.tenant).bind(q.after).bind(&q.search).fetch_all(&mut *tx).await?;
+    db::audit(
+        &mut tx,
+        &who,
+        "event.search",
+        None,
+        json!({"results":rows.len()}),
+    )
+    .await?;
+    let output = json!({"events":rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"sequence":r.get::<i64,_>("sequence"),"source":r.get::<String,_>("source"),"external_id":r.get::<String,_>("external_id"),"revision":r.get::<i64,_>("revision"),"actor":r.get::<String,_>("actor"),"classification":r.get::<String,_>("classification"),"preview":r.get::<Option<String>,_>("preview")})).collect::<Vec<_>>(),"next_after":rows.last().map(|r|r.get::<i64,_>("sequence"))});
+    tx.commit().await?;
+    Ok(Json(output))
+}

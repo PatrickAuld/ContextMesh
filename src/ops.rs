@@ -194,3 +194,46 @@ pub async fn jobs(
         json!({"jobs":rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"graph_id":r.get::<Uuid,_>("graph_id"),"event_id":r.get::<Uuid,_>("event_id"),"state":r.get::<String,_>("state"),"attempts":r.get::<i32,_>("attempts"),"lease_until":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("lease_until"),"error_code":r.get::<Option<String>,_>("error_code")})).collect::<Vec<_>>()}),
     ))
 }
+
+pub async fn metrics(
+    State(app): State<App>,
+    Extension(who): Extension<Identity>,
+) -> Result<([(axum::http::HeaderName, &'static str); 1], String)> {
+    who.require_admin()?;
+    let mut tx = db::begin(&app.pool, who.tenant).await?;
+    let rows =
+        sqlx::query("SELECT state,count(*) AS count FROM jobs WHERE tenant_id=$1 GROUP BY state")
+            .bind(who.tenant)
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut output=String::from("# HELP contextmesh_jobs Durable jobs by state for the authenticated tenant.\n# TYPE contextmesh_jobs gauge\n");
+    for row in rows {
+        output.push_str(&format!(
+            "contextmesh_jobs{{state=\"{}\"}} {}\n",
+            row.get::<String, _>("state"),
+            row.get::<i64, _>("count")
+        ));
+    }
+    let age:f64=sqlx::query_scalar("SELECT coalesce(extract(epoch FROM now()-min(available_at))::float8,0) FROM jobs WHERE tenant_id=$1 AND state='pending'").bind(who.tenant).fetch_one(&mut *tx).await?;
+    output.push_str(&format!("# HELP contextmesh_queue_age_seconds Oldest available pending job age.\n# TYPE contextmesh_queue_age_seconds gauge\ncontextmesh_queue_age_seconds {}\n",age.max(0.0)));
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        output,
+    ))
+}
+
+pub async fn redactions(
+    State(app): State<App>,
+    Extension(who): Extension<Identity>,
+    Query(page): Query<Page>,
+) -> Result<Json<Value>> {
+    who.require_admin()?;
+    let mut tx = db::begin(&app.pool, who.tenant).await?;
+    let rows=sqlx::query("SELECT id,sequence FROM events WHERE tenant_id=$1 AND redacted AND sequence>$2 ORDER BY sequence LIMIT 200").bind(who.tenant).bind(page.after).fetch_all(&mut *tx).await?;
+    Ok(Json(
+        json!({"tenant_id":who.tenant,"events":rows.iter().map(|r|json!({"event_id":r.get::<Uuid,_>("id"),"sequence":r.get::<i64,_>("sequence")})).collect::<Vec<_>>(),"next_after":rows.last().map(|r|r.get::<i64,_>("sequence"))}),
+    ))
+}
