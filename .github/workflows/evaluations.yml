@@ -1,0 +1,204 @@
+name: ContextMesh evaluations
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['site/**']
+  pull_request:
+    paths-ignore: ['site/**']
+  workflow_dispatch:
+    inputs:
+      run_public:
+        description: Run public retrieval evaluations
+        required: false
+        type: boolean
+        default: true
+      public_dataset_url:
+        description: Official small benchmark URL (must be paired with its SHA-256)
+        required: false
+        type: string
+        default: ''
+      public_dataset_sha256:
+        description: SHA-256 of public_dataset_url
+        required: false
+        type: string
+        default: ''
+      public_max_cases:
+        description: Maximum public benchmark cases
+        required: false
+        type: string
+        default: '8'
+
+permissions:
+  contents: read
+
+jobs:
+  balanced:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: contextmesh
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://cm_runtime:runtime_eval_password@localhost:5432/contextmesh
+      MIGRATION_DATABASE_URL: postgres://cm_owner:owner_eval_password@localhost:5432/contextmesh
+      CONTEXTMESH_TEST_LOG_DIR: ${{ github.workspace }}/eval-results/process-logs
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build once
+        run: cargo build --locked
+      - name: Create isolated database roles
+        run: |
+          psql postgres://postgres:postgres@localhost:5432/contextmesh -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            CREATE ROLE cm_owner LOGIN PASSWORD 'owner_eval_password' NOSUPERUSER NOBYPASSRLS;
+          EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN
+            CREATE ROLE cm_runtime LOGIN PASSWORD 'runtime_eval_password' NOSUPERUSER NOBYPASSRLS;
+          EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          ALTER DATABASE contextmesh OWNER TO cm_owner;
+          ALTER SCHEMA public OWNER TO cm_owner;
+          SQL
+          target/debug/contextmesh migrate --database-url "$MIGRATION_DATABASE_URL"
+          psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/grants.sql
+      - name: Run balanced unittest evaluations
+        run: python3 -m unittest discover -s evals -p 'test_*.py'
+      - name: Write balanced evaluation results
+        if: always()
+        run: python3 evals/balanced.py --output eval-results/balanced.json
+      - name: Summarize results
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          path = Path('eval-results/balanced.json')
+          print('### Balanced evaluations')
+          if not path.exists():
+              print('Result file was not produced.')
+          else:
+              data = json.loads(path.read_text())
+              rows = [r for r in data.get('rows', []) if r.get('mode') == 'contextmesh']
+              recall = data.get('summary', {}).get('modes', {}).get('contextmesh', {}).get('recall', {}).get('mean')
+              print(f"- completed: {data.get('completed', False)}")
+              print(f"- worlds: {data.get('worlds', 'unknown')}")
+              print(f"- contextmesh cases: {len(rows)}")
+              print(f"- contextmesh recall mean: {recall}")
+              print(f"- violations: {len(data.get('violations', []))}")
+              print(f"- output: `{path}`")
+          PY
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contextmesh-evaluation-results
+          path: eval-results
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload compiled binary for public run
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contextmesh-evaluation-binary
+          path: target/debug/contextmesh
+          if-no-files-found: error
+          retention-days: 1
+
+  public:
+    if: github.event_name != 'workflow_dispatch' || inputs.run_public == true
+    needs: balanced
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: contextmesh
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://cm_runtime:runtime_public_password@localhost:5432/contextmesh
+      MIGRATION_DATABASE_URL: postgres://cm_owner:owner_public_password@localhost:5432/contextmesh
+      PUBLIC_DATASET_URL: ${{ inputs.public_dataset_url || 'https://raw.githubusercontent.com/snap-research/locomo/3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376/data/locomo10.json' }}
+      PUBLIC_DATASET_SHA256: ${{ inputs.public_dataset_sha256 || '79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4' }}
+      PUBLIC_MAX_CASES: ${{ inputs.public_max_cases || '8' }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download and verify pinned public dataset
+        run: |
+          mkdir -p eval-input eval-results
+          curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' "$PUBLIC_DATASET_URL" -o eval-input/public.json
+          python3 - <<'PY'
+          import hashlib, os, re
+          from pathlib import Path
+          expected = os.environ['PUBLIC_DATASET_SHA256']
+          if not re.fullmatch('[0-9a-fA-F]{64}', expected):
+              raise SystemExit('Expected a SHA-256 digest')
+          actual = hashlib.file_digest(Path('eval-input/public.json').open('rb'), 'sha256').hexdigest()
+          if actual != expected.lower():
+              raise SystemExit('Dataset SHA-256 mismatch')
+          count = int(os.environ['PUBLIC_MAX_CASES'])
+          if not 1 <= count <= 64:
+              raise SystemExit('Public case limit must be between 1 and 64')
+          PY
+      - name: Download compiled binary from balanced job
+        uses: actions/download-artifact@v4
+        with:
+          name: contextmesh-evaluation-binary
+          path: target/debug
+      - run: chmod +x target/debug/contextmesh
+      - name: Create isolated database roles
+        run: |
+          psql postgres://postgres:postgres@localhost:5432/contextmesh -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE cm_owner LOGIN PASSWORD 'owner_public_password' NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE cm_runtime LOGIN PASSWORD 'runtime_public_password' NOSUPERUSER NOBYPASSRLS;
+          ALTER DATABASE contextmesh OWNER TO cm_owner;
+          ALTER SCHEMA public OWNER TO cm_owner;
+          SQL
+          target/debug/contextmesh migrate --database-url "$MIGRATION_DATABASE_URL"
+          psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/grants.sql
+      - name: Run public evidence retrieval comparisons
+        run: |
+          python3 evals/public.py eval-input/public.json --managed-service \
+            --mode no-memory --mode bm25 --mode full-history --mode contextmesh \
+            --sample-size "$PUBLIC_MAX_CASES" --seed 17 \
+            --dataset-version "$PUBLIC_DATASET_URL" --output eval-results/public
+      - name: Summarize public retrieval scores
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          path = Path('eval-results/public/aggregate.json')
+          print('### Public evidence retrieval (no reader or model judge)')
+          if path.exists():
+              print('\n| Mode | Cases | Source recall | Errors |\n|---|---:|---:|---:|')
+              for mode, row in json.loads(path.read_text())['modes'].items():
+                  print(f"| {mode} | {row['cases']} | {row['source_recall_mean']} | {row['errors']} |")
+          else:
+              print('No result artifact was produced; inspect the failed step.')
+          PY
+      - name: Upload public results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contextmesh-public-evaluation
+          path: eval-results
+          if-no-files-found: warn
+          retention-days: 14
