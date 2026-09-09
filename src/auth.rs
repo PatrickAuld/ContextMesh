@@ -21,6 +21,9 @@ pub struct Identity {
     pub groups: Vec<String>,
     pub admin: bool,
     pub agent: Option<Uuid>,
+    /// Tenant authorization version observed atomically with this identity snapshot.
+    #[serde(skip_serializing)]
+    pub security_epoch: i64,
 }
 impl Identity {
     pub fn require_admin(&self) -> Result<()> {
@@ -147,6 +150,11 @@ impl Auth {
         }
         sqlx::query("INSERT INTO principals(tenant_id,subject,groups) VALUES($1,$2,$3) ON CONFLICT(tenant_id,subject) DO UPDATE SET groups=EXCLUDED.groups,updated_at=now()")
             .bind(tenant).bind(&subject).bind(&groups).execute(&mut *tx).await?;
+        let security_epoch: i64 =
+            sqlx::query_scalar("SELECT security_epoch FROM tenants WHERE id=$1")
+                .bind(tenant)
+                .fetch_one(&mut *tx)
+                .await?;
         tx.commit().await?;
         let admin_group = &self
             .config
@@ -161,6 +169,7 @@ impl Auth {
             admin: groups.contains(admin_group),
             groups,
             agent: None,
+            security_epoch,
         })
     }
     async fn agent(&self, pool: &PgPool, token: &str) -> Result<Identity> {
@@ -170,7 +179,7 @@ impl Auth {
             .and_then(|s| Uuid::parse_str(s).ok())
             .ok_or_else(Error::auth)?;
         let mut tx = db::begin(pool, tenant).await?;
-        let row=sqlx::query("SELECT a.id,a.owner,p.groups FROM agent_tokens a JOIN principals p ON p.tenant_id=a.tenant_id AND p.subject=a.owner WHERE a.tenant_id=$1 AND a.token_hash=$2 AND NOT a.revoked AND a.expires_at>now() AND NOT p.disabled")
+        let row=sqlx::query("SELECT a.id,a.owner,p.groups,t.security_epoch FROM agent_tokens a JOIN principals p ON p.tenant_id=a.tenant_id AND p.subject=a.owner JOIN tenants t ON t.id=a.tenant_id WHERE a.tenant_id=$1 AND a.token_hash=$2 AND NOT a.revoked AND a.expires_at>now() AND NOT p.disabled")
             .bind(tenant).bind(db::hash(token)).fetch_optional(&mut *tx).await?.ok_or_else(Error::auth)?;
         Ok(Identity {
             tenant,
@@ -178,6 +187,7 @@ impl Auth {
             groups: row.get("groups"),
             admin: false,
             agent: Some(row.get("id")),
+            security_epoch: row.get("security_epoch"),
         })
     }
 }

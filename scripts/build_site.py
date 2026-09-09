@@ -21,9 +21,9 @@ PUBLIC = "https://patrickauld.github.io/ContextMesh/"
 PAGES = [
     ("docs/index.md", "docs", "Overview", "A guide to building shared, contextual memory into your agents with ContextMesh."),
     ("README.md", "docs/quickstart", "Quickstart", "Run ContextMesh locally, capture evidence, and retrieve sourced context."),
-    ("docs/architecture.md", "docs/architecture", "Architecture", "Evidence, incremental graph versions, durable workers, retrieval, and disclosure boundaries."),
+    ("docs/architecture.md", "docs/architecture", "Architecture", "Immutable records, lineage, curation, context retrieval, and disclosure boundaries."),
     ("docs/api.md", "docs/api", "API & integrations", "Connect harnesses through HTTP, the Rust client, and MCP."),
-    ("docs/operations.md", "docs/operations", "Operations", "Configure identity and inference, rebuild graphs, audit sources, and redact information."),
+    ("docs/operations.md", "docs/operations", "Operations", "Configure identity and inference, inspect curation, audit records, and redact information."),
     ("docs/testing.md", "docs/testing", "System validation", "Validate ContextMesh with black-box tests against real processes and PostgreSQL."),
     ("docs/evaluation.md", "docs/evaluation", "Evaluation strategy", "Benchmark ContextMesh memory quality, safety, efficiency, and auditability."),
 ]

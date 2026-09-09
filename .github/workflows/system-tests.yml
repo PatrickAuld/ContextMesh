@@ -37,6 +37,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked
+      - run: cargo test --locked
       - name: Create isolated database roles
         run: |
           psql postgres://postgres:postgres@localhost:5432/contextmesh -v ON_ERROR_STOP=1 <<'SQL'
@@ -48,13 +49,16 @@ jobs:
           target/debug/contextmesh migrate --database-url "$MIGRATION_DATABASE_URL"
           psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/grants.sql
       - name: Exercise real processes and PostgreSQL
-        run: python3 tests/e2e.py
-      - name: Upload process logs on failure
-        if: failure()
+        run: |
+          set -o pipefail
+          mkdir -p "$CONTEXTMESH_TEST_LOG_DIR"
+          python3 tests/e2e.py 2>&1 | tee /tmp/contextmesh-test-logs/test-report.log
+      - name: Upload process logs and test report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: system-test-logs
-          path: /tmp/contextmesh-test-logs/*.log
+          path: /tmp/contextmesh-test-logs
           retention-days: 3
   compose-smoke:
     runs-on: ubuntu-latest
@@ -73,17 +77,17 @@ jobs:
         env:
           TOKEN: local-person-token-change-before-sharing
         run: |
-          curl -fsS http://127.0.0.1:8787/v1/events \
+          curl -fsS http://127.0.0.1:8787/v1/records \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-            -d '{"source":"compose","external_id":"smoke","revision":1,"text":"Container persistence canary","context":{"entities":["test:Container"]}}'
+            -d '{"records":[{"id":"00000000-0000-4000-8000-000000000001","content":"Container persistence canary"}]}'
           python3 - <<'PY'
           import json, os, time, urllib.request
-          url='http://127.0.0.1:8787/v1/query'
+          url='http://127.0.0.1:8787/v1/context'
           for _ in range(60):
-              req=urllib.request.Request(url,data=json.dumps({'query':'Container persistence canary'}).encode(),headers={'Authorization':'Bearer '+os.environ['TOKEN'],'Content-Type':'application/json'})
+              req=urllib.request.Request(url,data=json.dumps({'task':'Container persistence canary'}).encode(),headers={'Authorization':'Bearer '+os.environ['TOKEN'],'Content-Type':'application/json'})
               with urllib.request.urlopen(req) as response:
                   packet=json.load(response)
-              if any('Container persistence canary' in m['text'] for m in packet['memories']):
+              if any('Container persistence canary' in record['content'] for record in packet['records']):
                   break
               time.sleep(.5)
           else:

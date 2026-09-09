@@ -2,11 +2,9 @@ use crate::{
     auth::{Auth, Identity},
     config::Config,
     db,
-    domain::GraphConfig,
     error::Error,
-    events, graphs,
     inference::Gateway,
-    ops, policy, query,
+    ops, policy, query, records,
 };
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -20,7 +18,6 @@ use serde_json::json;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct App {
@@ -64,25 +61,6 @@ impl App {
             db::lock(&mut tx, tenant.id)
                 .await
                 .map_err(|_| anyhow::anyhow!("tenant_lock"))?;
-            let active: Option<Uuid> =
-                sqlx::query_scalar("SELECT active_graph FROM tenants WHERE id=$1")
-                    .bind(tenant.id)
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if active.is_none() {
-                let id = Uuid::new_v4();
-                let mut config = GraphConfig::default();
-                if self.gateway.configured() {
-                    config.mode = "llm".into();
-                    config.model = self.gateway.model();
-                }
-                sqlx::query("INSERT INTO graphs(tenant_id,id,name,config,state) VALUES($1,$2,'initial',$3,'ready')").bind(tenant.id).bind(id).bind(serde_json::to_value(config)?).execute(&mut *tx).await?;
-                sqlx::query("UPDATE tenants SET active_graph=$2 WHERE id=$1")
-                    .bind(tenant.id)
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await?;
-            }
             tx.commit().await?;
         }
         Ok(())
@@ -122,35 +100,27 @@ async fn query_limit(
 }
 pub fn router(app: App) -> Router {
     let queries = Router::new()
-        .route("/v1/query", post(query::query))
-        .route("/v1/wiki", post(query::wiki))
+        .route("/v1/context", post(query::context))
         .layer(middleware::from_fn_with_state(app.clone(), query_limit));
     let protected = Router::new()
         .route(
             "/v1/identity",
             get(|axum::Extension(who): axum::Extension<Identity>| async move { Json(who) }),
         )
-        .route("/v1/events", get(events::list).post(events::insert))
-        .route("/v1/events/{id}", get(events::get))
-        .route("/v1/events/{id}/redact", post(events::redact))
-        .route("/v1/events/{id}/classification", post(events::classify))
-        .route("/v1/graphs", get(graphs::list).post(graphs::create))
-        .route("/v1/graphs/{id}/promote", post(graphs::promote))
-        .route("/v1/graphs/{id}/edges", get(graphs::edges))
-        .route("/v1/graphs/{id}/archive", post(graphs::archive))
-        .route("/v1/graphs/{id}/retry", post(graphs::retry))
+        .route("/v1/records", post(append_records))
+        .route("/v1/records/{id}", get(get_record))
+        .route("/v1/records/{id}/redact", post(redact_record))
+        .route("/v1/records/{id}/classification", post(classify_record))
         .route("/v1/policies", get(policy::list).post(policy::create))
         .route("/v1/policies/{id}/revoke", post(policy::revoke))
         .route("/v1/agents", post(ops::delegate))
         .route("/v1/agents/{id}/revoke", post(ops::revoke_agent))
         .route("/v1/principals/status", post(ops::principal))
         .route("/v1/audit", get(ops::audit))
-        .route("/v1/lineage/{id}", get(ops::lineage))
         .route("/v1/status", get(ops::status))
         .route("/v1/metrics", get(ops::metrics))
         .route("/v1/redactions", get(ops::redactions))
         .route("/v1/jobs", get(ops::jobs))
-        .route("/v1/receipts/{id}", get(query::receipt))
         .merge(queries)
         .layer(middleware::from_fn_with_state(app.clone(), auth));
     Router::new()
@@ -165,6 +135,58 @@ pub fn router(app: App) -> Router {
             }),
         )
         .merge(protected)
-        .layer(DefaultBodyLimit::max(128 * 1024))
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(app)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppendRecords {
+    records: Vec<crate::domain::NewRecord>,
+}
+async fn append_records(
+    State(app): State<App>,
+    axum::Extension(who): axum::Extension<Identity>,
+    Json(input): Json<AppendRecords>,
+) -> Result<Json<crate::domain::AppendResult>, Error> {
+    records::append(
+        &app.pool,
+        &who,
+        input.records,
+        None,
+        app.gateway.configured(),
+    )
+    .await
+    .map(Json)
+}
+async fn get_record(
+    State(app): State<App>,
+    axum::Extension(who): axum::Extension<Identity>,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+) -> Result<Json<crate::domain::Record>, Error> {
+    records::get(&app.pool, &who, id).await.map(Json)
+}
+async fn redact_record(
+    State(app): State<App>,
+    axum::Extension(who): axum::Extension<Identity>,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, Error> {
+    records::redact(&app.pool, &who, id).await?;
+    Ok(Json(json!({"redacted": id})))
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Classification {
+    visibility: crate::domain::Visibility,
+    #[serde(default)]
+    groups: Vec<String>,
+}
+async fn classify_record(
+    State(app): State<App>,
+    axum::Extension(who): axum::Extension<Identity>,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+    Json(input): Json<Classification>,
+) -> Result<Json<serde_json::Value>, Error> {
+    records::classify(&app.pool, &who, id, input.visibility, input.groups).await?;
+    Ok(Json(json!({"updated": id})))
 }

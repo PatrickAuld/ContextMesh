@@ -1,36 +1,37 @@
 # ContextMesh engineering guide
 
-ContextMesh is a Rust service with PostgreSQL as its durable state. `site/` is the marketing site; it is deployed independently.
+ContextMesh is a Rust service with PostgreSQL as its durable store. `site/` is the separately deployed marketing/docs site.
 
 ## Boundaries
 
-- `domain.rs`: graph configuration and source-grounded claim contracts.
-- `auth.rs`: OIDC verification, delegated identities, group resolution. Tenant identity never comes from a request body.
-- `events.rs`: evidence capture, corrections, classification, and redaction.
-- `graphs.rs` / `worker.rs`: graph lifecycle and leased incremental derivation. Inference happens outside database transactions.
-- `inference.rs`: OpenAI-compatible gateway boundary. Never log prompts, responses, API keys, or provider error bodies.
-- `query.rs`: authorized candidate retrieval, graph association, bounded planning, context packets, and receipts.
-- `policy.rs`: approved disclosure choices. Restricted free-form model output must never reach the caller.
-- `ops.rs`: owner-only audit and operational actions.
-- `db.rs` / `migrations/`: tenant-scoped transactions and schema. Every tenant-owned query needs both an explicit tenant predicate and RLS context.
-- `api.rs` / `main.rs`: HTTP wiring, runtime lifecycle, CLI, and stdio MCP transport.
+- `domain.rs`: the single immutable record contract, scopes, and source supports.
+- `records.rs` / `records/`: atomic append, idempotency, lineage, canonical authorization/availability, supersession, and privacy controls.
+- `worker.rs`: leased curation jobs that append derived records; inference occurs outside transactions.
+- `inference.rs`: OpenAI-compatible gateway. Never log prompts, responses, credentials, or provider error bodies.
+- `query.rs`: task context selection and bounded lineage traversal; no persistent query/session state.
+- `policy.rs`: approved disclosure choices; restricted free-form model output cannot reach callers.
+- `auth.rs` / `ops.rs`: OIDC/delegation, current identity state, audit, and operational controls.
+- `db.rs` / `migrations/`: tenant transactions, immutable log, relational lineage, and operational schema.
+- `api.rs` / `main.rs` / `client.rs`: transport, runtime lifecycle, and durable harness capture.
 
-Prefer tactical edits in these boundaries over broad refactoring. Keep source contracts independent of transport details. Add a module when a new responsibility warrants it; do not split crates just to mirror folders.
+Keep one canonical layer for lineage/availability. Do not reintroduce separate event, claim, graph lifecycle, or context receipt models. Prefer direct typed contracts; keep files below 1000 lines and avoid thin wrappers that merely move complexity.
 
 ## Invariants
 
-1. Every claim and edge retains an evidence path. Source corrections are new revisions.
-2. Redaction removes retrievability across all graph versions and cannot be undone by replay, a stale worker, or a receipt.
-3. Retroactive classification invalidates dependent release policies; reapproval is explicit.
-4. An agent acts for a person, inherits current stored groups, and never gains owner privileges through delegation.
-5. All inference outputs are untrusted. Source quote matching establishes provenance, not factual truth or semantic entailment.
-6. Graph configurations are immutable. New models or representation parameters require a new graph. Existing graphs receive incremental source events until archived.
-7. Audit entries contain identifiers and operational metadata, not source payloads or answers.
+1. Every generated record retains all actual model inputs mechanically, distinct from supporting citations.
+2. Supersession is explicit and authorized. Historical records remain inspectable; timestamps alone cannot overwrite knowledge.
+3. Authorization covers every transitive input before inference or disclosure. Scope filters never grant permission. Traversal bounds fail closed.
+4. Redaction removes retrievability of a record and its descendants. Replay, stale workers, and restore cannot revive deleted content.
+5. Reclassification only changes access metadata and invalidates dependent release policies.
+6. Agents act for a person, inherit current stored groups, and never gain administrator privileges through delegation.
+7. Captured content and inference output are untrusted. Exact quotes establish provenance, not truth.
+8. Batch append and worker completion are atomic. All tenant-owned SQL includes explicit tenant predicates and RLS context.
+9. Audit/error logs contain identifiers and operational metadata, not payloads or answers.
 
 ## Verification
 
-Run `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo build --locked`. The primary regression suite is `python3 tests/e2e.py`, using real service processes, real PostgreSQL, and a controllable inference gateway. The CI workflow provisions isolated owner/runtime DB roles.
+Run `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, and `cargo test --locked`. The regression suite is `python3 tests/e2e.py` against real service processes, PostgreSQL, and a controllable inference gateway. CI provisions separate database owner/runtime roles.
 
-Prefer black-box tests for behavior, races, process failure, and access boundaries. Do not replace PostgreSQL with an in-memory fake. Never claim a test ran when only compilation succeeded. Do not add credentials or local database artifacts to git.
+Prefer black-box tests for behavior, races, restarts, and access boundaries. Do not replace PostgreSQL with an in-memory fake. Distinguish deterministic contract tests and synthetic evals from real-model quality. Never claim a suite ran when only compilation succeeded. Keep credentials, local databases, and process logs out of git.
 
-Migrations already deployed must not be edited: add a new migration. Public APIs must fail closed on identity and disclosure errors. Preserve bounded work, explicit retry states, and content-free error responses.
+Do not edit previously committed migrations: add another migration. Breaking pre-release changes are allowed when explicitly requested. Preserve bounded work, operational retries, and content-free error responses.

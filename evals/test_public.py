@@ -66,13 +66,10 @@ class _Handler(BaseHTTPRequestHandler):
         n = int(self.headers["Content-Length"])
         body = json.loads(self.rfile.read(n))
         self.__class__.calls.append((self.path, body, self.headers.get("Authorization")))
-        if self.path == "/v1/events":
-            result = {"event_id": "event-1", "duplicate": False}
+        if self.path == "/v1/records":
+            result = {"records": [{"id": body["records"][0]["id"], "duplicate": False}]}
         else:
-            result = {
-                "receipt_id": "receipt-1",
-                "memories": [{"text": "I visited the museum.", "source": {"external_id": "public-eval/ns/7:0/session_1/0"}}],
-            }
+            result = {"watermark": 1, "records": [{"id": "record-1", "content": "I visited the museum.", "metadata": {"source_id": "session_1"}}]}
         encoded = json.dumps(result).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -82,7 +79,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.__class__.calls.append((self.path, {}, self.headers.get("Authorization")))
-        result = {"jobs": {}} if self.path == "/v1/status" else {"graphs": [{"active": True, "state": "ready", "pending": 0, "failed": 0}]}
+        result = {"jobs": {}}
         encoded = json.dumps(result).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -154,9 +151,9 @@ class PublicEvalTests(unittest.TestCase):
         adapter = ContextMeshHTTPAdapter(f"http://127.0.0.1:{server.server_port}", "secret", namespace="ns")
         result = adapter.retrieve(case, EvalBudget(1_000, 60))
         self.assertIsNone(result.error)
-        self.assertEqual(result.receipt["receipt_id"], "receipt-1")
+        self.assertEqual(result.receipt["watermark"], 1)
         self.assertTrue(all(c[2] == "Bearer secret" for c in _Handler.calls))
-        self.assertEqual({c[0] for c in _Handler.calls}, {"/v1/events", "/v1/query", "/v1/status", "/v1/graphs"})
+        self.assertEqual({c[0] for c in _Handler.calls}, {"/v1/records", "/v1/context", "/v1/status"})
 
     def test_artifacts_include_hash_version_and_aggregate(self):
         data_path = self._file(LONG)

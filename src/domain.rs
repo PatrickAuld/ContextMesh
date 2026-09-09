@@ -1,100 +1,176 @@
 use crate::error::{Error, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeMap;
+use serde_json::{Map, Value};
+use std::collections::HashSet;
+use uuid::Uuid;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    #[default]
+    Personal,
+    Internal,
+    Restricted,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GraphConfig {
-    #[serde(default = "mode")]
-    pub mode: String,
+pub struct Scope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(default)]
-    pub model: Option<String>,
+    pub visibility: Visibility,
     #[serde(default)]
-    pub instructions: String,
+    pub groups: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeFilter {
     #[serde(default)]
-    pub temperature: f32,
-    #[serde(default = "extractor")]
+    pub conversation: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Support {
+    pub record_id: Uuid,
+    pub quote: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Derivation {
+    pub model: String,
     pub extractor_version: String,
+    pub instructions: String,
 }
-fn mode() -> String {
-    "literal".into()
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewRecord {
+    pub id: Uuid,
+    pub content: String,
+    #[serde(default)]
+    pub scope: Scope,
+    #[serde(default)]
+    pub inputs: Vec<Uuid>,
+    #[serde(default)]
+    pub supports: Vec<Support>,
+    #[serde(default)]
+    pub supersedes: Vec<Uuid>,
+    #[serde(default = "empty_object")]
+    pub metadata: Value,
 }
-fn extractor() -> String {
-    "claims-v1".into()
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Record {
+    pub id: Uuid,
+    pub content: String,
+    pub scope: Scope,
+    pub inputs: Vec<Uuid>,
+    pub supports: Vec<Support>,
+    pub supersedes: Vec<Uuid>,
+    pub metadata: Value,
+    pub author: String,
+    pub agent_id: Option<Uuid>,
+    pub recorded_at: DateTime<Utc>,
+    pub sequence: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<Derivation>,
 }
-impl GraphConfig {
-    pub fn validate(&self) -> Result<()> {
-        if !["literal", "llm"].contains(&self.mode.as_str())
-            || !(0.0..=2.0).contains(&self.temperature)
-            || self.instructions.len() > 16000
-            || self.extractor_version != "claims-v1"
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AppendRecord {
+    pub id: Uuid,
+    pub duplicate: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct AppendResult {
+    pub records: Vec<AppendRecord>,
+}
+
+fn empty_object() -> Value {
+    Value::Object(Map::new())
+}
+
+impl Scope {
+    pub fn validate(&mut self) -> Result<()> {
+        self.groups.sort();
+        self.groups.dedup();
+        if self
+            .conversation
+            .as_ref()
+            .is_some_and(|v| v.is_empty() || v.len() > 512)
+            || self
+                .project
+                .as_ref()
+                .is_some_and(|v| v.is_empty() || v.len() > 512)
+            || self.groups.len() > 64
+            || self.groups.iter().any(|g| g.is_empty() || g.len() > 256)
+            || matches!(self.visibility, Visibility::Personal) && !self.groups.is_empty()
         {
-            return Err(Error::bad("invalid_graph_config"));
+            return Err(Error::bad("invalid_scope"));
+        }
+        Ok(())
+    }
+    pub fn readable_by(&self, subject: &str, author: &str, groups: &[String], admin: bool) -> bool {
+        match self.visibility {
+            Visibility::Personal => subject == author || admin,
+            Visibility::Internal => true,
+            Visibility::Restricted => admin || self.groups.iter().any(|g| groups.contains(g)),
+        }
+    }
+}
+
+impl NewRecord {
+    pub fn validate(&mut self) -> Result<()> {
+        self.scope.validate()?;
+        let unique_inputs: HashSet<_> = self.inputs.iter().collect();
+        let unique_supersedes: HashSet<_> = self.supersedes.iter().collect();
+        if self.content.is_empty()
+            || self.content.len() > 256_000
+            || self.inputs.len() > 256
+            || self.supports.len() > 256
+            || self.supersedes.len() > 256
+            || self
+                .supports
+                .iter()
+                .any(|s| s.quote.is_empty() || s.quote.len() > 32_000)
+            || !self.metadata.is_object()
+            || serde_json::to_vec(&self.metadata).map_or(true, |v| v.len() > 64_000)
+            || unique_inputs.len() != self.inputs.len()
+            || unique_supersedes.len() != self.supersedes.len()
+        {
+            return Err(Error::bad("invalid_record"));
+        }
+        if self
+            .supports
+            .iter()
+            .any(|s| !self.inputs.contains(&s.record_id))
+            || self.supersedes.iter().any(|id| !self.inputs.contains(id))
+            || self.inputs.contains(&self.id)
+        {
+            return Err(Error::bad("invalid_lineage"));
         }
         Ok(())
     }
 }
-impl Default for GraphConfig {
-    fn default() -> Self {
-        Self {
-            mode: mode(),
-            model: None,
-            instructions: String::new(),
-            temperature: 0.0,
-            extractor_version: extractor(),
-        }
-    }
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Claim {
-    pub text: String,
-    pub quote: String,
-    #[serde(default = "intent")]
-    pub intent: String,
-    #[serde(default)]
-    pub entities: Vec<String>,
-    #[serde(default)]
-    pub applies: BTreeMap<String, Value>,
-    #[serde(default)]
-    pub dependencies: BTreeMap<String, String>,
-    #[serde(default)]
-    pub slot: Option<String>,
-    #[serde(default)]
-    pub relations: Vec<Relation>,
-}
-fn intent() -> String {
-    "observation".into()
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Relation {
-    pub from: String,
-    pub relation: String,
-    pub to: String,
-}
-impl Claim {
-    pub fn validate(&self, source: &str) -> Result<()> {
-        if self.text.is_empty()
-            || self.text.len() > 16000
-            || self.quote.is_empty()
-            || !source.contains(&self.quote)
-            || self.quote.len() > 16000
-            || self.entities.len() > 32
-            || self.relations.len() > 64
-            || !["observation", "guidance", "evidence"].contains(&self.intent.as_str())
+
+impl Derivation {
+    pub fn validate(&self) -> Result<()> {
+        if self.model.is_empty()
+            || self.model.len() > 512
+            || self.extractor_version.is_empty()
+            || self.extractor_version.len() > 256
+            || self.instructions.len() > 32_000
         {
-            return Err(Error::bad("invalid_claim"));
-        }
-        if self.entities.iter().any(|e| e.is_empty() || e.len() > 256)
-            || self.relations.iter().any(|r| {
-                !self.entities.contains(&r.from)
-                    || !self.entities.contains(&r.to)
-                    || r.relation.len() > 128
-            })
-        {
-            return Err(Error::bad("invalid_entities"));
+            return Err(Error::bad("invalid_derivation"));
         }
         Ok(())
     }

@@ -43,6 +43,7 @@ pub async fn delegate(
         Uuid::new_v4().simple()
     );
     let mut tx = db::begin(&app.pool, who.tenant).await?;
+    db::lock_as(&mut tx, &who).await?;
     sqlx::query("INSERT INTO agent_tokens(tenant_id,id,token_hash,owner,name,expires_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(secs=>$6::int))")
         .bind(who.tenant).bind(id).bind(db::hash(&token)).bind(&who.subject).bind(input.name).bind(input.ttl_seconds as i32).execute(&mut *tx).await?;
     db::audit(
@@ -67,7 +68,7 @@ pub async fn revoke_agent(
         return Err(Error::forbidden());
     }
     let mut tx = db::begin(&app.pool, who.tenant).await?;
-    db::lock(&mut tx, who.tenant).await?;
+    db::lock_as(&mut tx, &who).await?;
     let r = sqlx::query(
         "UPDATE agent_tokens SET revoked=true WHERE tenant_id=$1 AND id=$2 AND (owner=$3 OR $4)",
     )
@@ -104,7 +105,7 @@ pub async fn principal(
         return Err(Error::bad("cannot_disable_self"));
     }
     let mut tx = db::begin(&app.pool, who.tenant).await?;
-    db::lock(&mut tx, who.tenant).await?;
+    db::lock_as(&mut tx, &who).await?;
     let n = sqlx::query("UPDATE principals SET disabled=$3 WHERE tenant_id=$1 AND subject=$2")
         .bind(who.tenant)
         .bind(&input.subject)
@@ -144,25 +145,12 @@ pub async fn audit(
 ) -> Result<Json<Value>> {
     who.require_admin()?;
     let mut tx = db::begin(&app.pool, who.tenant).await?;
+    db::lock_as(&mut tx, &who).await?;
     let rows=sqlx::query("SELECT * FROM audit WHERE tenant_id=$1 AND sequence>$2 AND ($3::uuid IS NULL OR target=$3) ORDER BY sequence LIMIT 200")
         .bind(who.tenant).bind(page.after).bind(page.target).fetch_all(&mut *tx).await?;
     Ok(Json(
         json!({"entries":rows.iter().map(|r|json!({"sequence":r.get::<i64,_>("sequence"),"actor":r.get::<String,_>("actor"),"agent_id":r.get::<Option<Uuid>,_>("agent_id"),"action":r.get::<String,_>("action"),"target":r.get::<Option<Uuid>,_>("target"),"metadata":r.get::<Value,_>("metadata"),"created_at":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at")})).collect::<Vec<_>>(),"next_after":rows.last().map(|r|r.get::<i64,_>("sequence"))}),
     ))
-}
-pub async fn lineage(
-    State(app): State<App>,
-    Extension(who): Extension<Identity>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<Value>> {
-    who.require_admin()?;
-    let mut tx = db::begin(&app.pool, who.tenant).await?;
-    let rows=sqlx::query("SELECT c.id,c.graph_id,c.event_id,c.quote,e.actor,e.agent_id,e.source,e.external_id,e.revision,g.config,j.id AS job_id FROM claims c JOIN events e ON e.tenant_id=c.tenant_id AND e.id=c.event_id JOIN graphs g ON g.tenant_id=c.tenant_id AND g.id=c.graph_id JOIN jobs j ON j.tenant_id=c.tenant_id AND j.graph_id=c.graph_id AND j.event_id=c.event_id WHERE c.tenant_id=$1 AND (c.id=$2 OR c.event_id=$2) AND NOT e.redacted ORDER BY c.id LIMIT 200")
-        .bind(who.tenant).bind(id).fetch_all(&mut *tx).await?;
-    db::audit(&mut tx, &who, "lineage.read", Some(id), json!({})).await?;
-    let output = json!({"lineage":rows.iter().map(|r|json!({"claim_id":r.get::<Uuid,_>("id"),"graph_id":r.get::<Uuid,_>("graph_id"),"event_id":r.get::<Uuid,_>("event_id"),"quote":r.get::<String,_>("quote"),"actor":r.get::<String,_>("actor"),"agent_id":r.get::<Option<Uuid>,_>("agent_id"),"source":r.get::<String,_>("source"),"external_id":r.get::<String,_>("external_id"),"revision":r.get::<i64,_>("revision"),"config":r.get::<Value,_>("config"),"job_id":r.get::<Uuid,_>("job_id")})).collect::<Vec<_>>()});
-    tx.commit().await?;
-    Ok(Json(output))
 }
 pub async fn status(
     State(app): State<App>,
@@ -170,6 +158,7 @@ pub async fn status(
 ) -> Result<Json<Value>> {
     who.require_admin()?;
     let mut tx = db::begin(&app.pool, who.tenant).await?;
+    db::lock_as(&mut tx, &who).await?;
     let rows =
         sqlx::query("SELECT state,count(*) AS count FROM jobs WHERE tenant_id=$1 GROUP BY state")
             .bind(who.tenant)
@@ -189,9 +178,10 @@ pub async fn jobs(
 ) -> Result<Json<Value>> {
     who.require_admin()?;
     let mut tx = db::begin(&app.pool, who.tenant).await?;
-    let rows=sqlx::query("SELECT id,graph_id,event_id,state,attempts,lease_until,error_code FROM jobs WHERE tenant_id=$1 AND state IN ('failed','running','pending') ORDER BY available_at LIMIT 200").bind(who.tenant).fetch_all(&mut *tx).await?;
+    db::lock_as(&mut tx, &who).await?;
+    let rows=sqlx::query("SELECT id,record_id,state,attempts,lease_until,error_code FROM jobs WHERE tenant_id=$1 AND state IN ('failed','running','pending') ORDER BY available_at LIMIT 200").bind(who.tenant).fetch_all(&mut *tx).await?;
     Ok(Json(
-        json!({"jobs":rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"graph_id":r.get::<Uuid,_>("graph_id"),"event_id":r.get::<Uuid,_>("event_id"),"state":r.get::<String,_>("state"),"attempts":r.get::<i32,_>("attempts"),"lease_until":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("lease_until"),"error_code":r.get::<Option<String>,_>("error_code")})).collect::<Vec<_>>()}),
+        json!({"jobs":rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"record_id":r.get::<Uuid,_>("record_id"),"state":r.get::<String,_>("state"),"attempts":r.get::<i32,_>("attempts"),"lease_until":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("lease_until"),"error_code":r.get::<Option<String>,_>("error_code")})).collect::<Vec<_>>()}),
     ))
 }
 
@@ -201,6 +191,7 @@ pub async fn metrics(
 ) -> Result<([(axum::http::HeaderName, &'static str); 1], String)> {
     who.require_admin()?;
     let mut tx = db::begin(&app.pool, who.tenant).await?;
+    db::lock_as(&mut tx, &who).await?;
     let rows =
         sqlx::query("SELECT state,count(*) AS count FROM jobs WHERE tenant_id=$1 GROUP BY state")
             .bind(who.tenant)
@@ -232,8 +223,9 @@ pub async fn redactions(
 ) -> Result<Json<Value>> {
     who.require_admin()?;
     let mut tx = db::begin(&app.pool, who.tenant).await?;
-    let rows=sqlx::query("SELECT id,sequence FROM events WHERE tenant_id=$1 AND redacted AND sequence>$2 ORDER BY sequence LIMIT 200").bind(who.tenant).bind(page.after).fetch_all(&mut *tx).await?;
+    db::lock_as(&mut tx, &who).await?;
+    let rows=sqlx::query("SELECT id,sequence FROM records WHERE tenant_id=$1 AND redacted AND sequence>$2 ORDER BY sequence LIMIT 200").bind(who.tenant).bind(page.after).fetch_all(&mut *tx).await?;
     Ok(Json(
-        json!({"tenant_id":who.tenant,"events":rows.iter().map(|r|json!({"event_id":r.get::<Uuid,_>("id"),"sequence":r.get::<i64,_>("sequence")})).collect::<Vec<_>>(),"next_after":rows.last().map(|r|r.get::<i64,_>("sequence"))}),
+        json!({"tenant_id":who.tenant,"records":rows.iter().map(|r|json!({"record_id":r.get::<Uuid,_>("id"),"sequence":r.get::<i64,_>("sequence")})).collect::<Vec<_>>(),"next_after":rows.last().map(|r|r.get::<i64,_>("sequence"))}),
     ))
 }

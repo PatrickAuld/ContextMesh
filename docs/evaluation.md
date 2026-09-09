@@ -1,5 +1,14 @@
 # Evaluation strategy
 
+## Immutable records release
+
+The current implementation uses one record log and `/v1/records` + `/v1/context`. This document also retains broader research criteria; graph lifecycle, entity-slot conflicts, automatic version-applicability reasoning, federation, and persisted receipts described below are evaluation targets, not current API promises. An adapter must mark unsupported operations unavailable rather than synthesize behavior or claim a pass.
+
+For this release, append/correction use immutable record IDs and explicit `supersedes`; lineage includes the mechanically attached complete model input manifest as well as source supports. Context packets themselves provide selected record references; the external evaluation runner records requests/results rather than requiring a server receipt. Replace graph rebuild checks with service/worker restart, index reconstruction where implemented, immutable-history inspection, and deletion replay checks. Semantic version applicability requires explicit scoped evidence or a downstream reader and must not be inferred from metadata by the evaluation adapter.
+
+Report deterministic storage/lineage/access conformance separately from retrieval performance and real-model extraction quality. Compare raw capture and curated operation as separate operating points. The first-party suite retains paired worlds and BM25/no-memory/oracle controls; public evidence retrieval retains the pinned LoCoMo corpus and full-history control. No fixture-generated note should be presented as evidence that a real model extracts memory accurately.
+
+
 Research and proposal · September 5, 2026
 
 Runnable first tier · September 8, 2026: [paired deterministic evaluation](../evals/README.md),
@@ -97,7 +106,7 @@ Reset(namespace)
 Append(event) -> event_id
 Await(watermark)
 Query(principal, objective, task_context, budget) -> context_packet
-Feedback(query_receipt, outcome)
+Append(outcome_record_with_inputs)
 Redact(source_or_span)
 Snapshot()
 Rebuild(snapshot)
@@ -107,7 +116,7 @@ The runner captures four artifacts for every case:
 
 1. accepted source events and ingest acknowledgements;
 2. committed memory state or the closest inspectable equivalent;
-3. retrieved evidence/context packet plus query receipt;
+3. retrieved evidence/context packet plus the runner-recorded request and source IDs;
 4. final answer, tool trajectory, and environment outcome.
 
 This allows the same case to be scored at write, retrieve, compile, and act stages. Final-answer-only scoring is explicitly insufficient.
@@ -255,7 +264,7 @@ Criteria:
 - the system finds minimal sufficient evidence rather than maximizing retrieved text;
 - search steps remain within declared call, latency, and token budgets;
 - packets separately represent applicable guidance, evidence, conflicts, version mismatches, missing dependencies, and external snippets;
-- every delivered claim has attributable provenance and every query has a reproducible receipt;
+- every delivered record has attributable provenance and the evaluation runner retains its exact context request/result;
 - the system abstains or returns missing evidence instead of manufacturing closure.
 
 Primary metrics: evidence-atom recall, context precision, minimal-evidence coverage, hop completion, citation precision/recall, packet-schema completeness, budget violations, query latency, and tokens returned.
@@ -384,7 +393,7 @@ A build cannot ship if any fixed conformance or adversarial case shows:
 - silent use of a known version-incompatible instruction;
 - a committed assertion without valid provenance under the case’s contract;
 - a projection rebuild that diverges from the frozen event/commit log;
-- a query packet without a receipt linking delivered claims to source versions.
+- a context packet whose selected records lack resolvable immutable input lineage.
 
 ### Measured quality gates
 

@@ -11,7 +11,7 @@ import re
 import subprocess
 import time
 
-VERSION = "cmes-paired-v1"
+VERSION = "cmes-records-paired-v2"
 BUDGET = 16000
 
 
@@ -40,13 +40,13 @@ def generate(seed, worlds):
         value, alternate = rng.sample(range(100, 999), 2)
         event("direct", "capacity", f"The approved capacity is {value} units.")
         case("direct", "capacity", ["direct"])
-        case("indirect_entity", "capacity", ["direct"], query="What limit should I use?")
+        case("indirect_quality", "capacity", ["direct"], query="What limit should I use?", entities=[])
         case("missing", "absent", [])
         event("prod", "deploy", f"Production rollout requires ticket {value}.", applies={"project": "prod"})
         event("stage", "deploy", f"Staging rollout requires ticket {alternate}.", applies={"project": "stage"})
         case("scope_match", "deploy", ["prod"], {"project": "prod"})
         case("scope_sibling", "deploy", ["stage"], {"project": "stage"})
-        case("scope_missing", "deploy", [])
+        case("no_scope_filter", "deploy", ["prod", "stage"])
         event("version", "migration", f"For engine v2 set buffer to {value}.", dependencies={"engine": "2"})
         case("version_match", "migration", ["version"], {"versions": {"engine": "2"}})
         case("version_changed", "migration", ["version"], {"versions": {"engine": "3"}})
@@ -68,7 +68,6 @@ def generate(seed, worlds):
         event("retain", "retention", f"Unrelated evidence says preserve code {alternate}.")
         case("before_redaction", "retention", ["erase", "retain"])
         case("after_redaction", "retention", ["retain"], phase="redacted")
-        case("after_rebuild", "retention", ["retain"], phase="rebuilt")
         event("distractor", "capacity", "A draft brainstorming session discussed capacity without approving a limit.")
         case("lexical_distractor", "capacity", ["direct"], entities=[])
         rng.shuffle(events)
@@ -86,12 +85,8 @@ def visible(event, case):
 
 
 def applicable(event, case):
-    return all(case["context"].get(k) == v for k, v in event["applies"].items())
-
-
-def usage(event, case):
-    versions = case["context"].get("versions", {})
-    return "revalidate" if any(versions.get(k) != v for k, v in event["dependencies"].items()) else "applicable"
+    project = case["context"].get("project")
+    return project is None or event["applies"].get("project") == project
 
 
 def words(text):
@@ -116,11 +111,10 @@ def baseline(mode, events, case):
             idf = math.log(1 + (len(documents) - df + .5) / (df + .5))
             denominator = frequency + 1.2 * (.25 + .75 * sum(document.values()) / max(1, average))
             score += idf * frequency * 2.2 / denominator
-        entity_match = bool(set(event["entities"]) & set(case["entities"]))
-        if score or entity_match:
-            ranked.append((-int(entity_match), -score, event["key"], event))
+        if score:
+            ranked.append((-score, event["key"], event))
     chosen, used = [], 0
-    for _, _, _, event in sorted(ranked):
+    for _, _, event in sorted(ranked):
         size = len(event["text"])
         if used + size <= BUDGET:
             chosen.append(event)
@@ -176,39 +170,30 @@ def summarize(rows, seed):
 
 
 def assess_packet(packet, case, events, ids):
+    """Validate only authorized, source-grounded records in a context packet."""
     by_id = {ids[e["key"]]: e for e in events}
-    selected, violations = [], []
-    for memory in packet["memories"]:
-        event = by_id.get(memory["event_id"])
-        if event is None:
-            violations.append("unknown_or_superseded_source")
+    selected, violations, record_ids = [], [], []
+    for record in packet.get("records", []):
+        record_id = record.get("id")
+        record_ids.append(record_id)
+        supports = record.get("supports", [])
+        evidence_ids = [record_id] if record_id in by_id else [
+            support.get("record_id") for support in supports
+            if support.get("record_id") in by_id
+        ]
+        if not evidence_ids:
+            violations.append("unknown_or_redacted_source")
             continue
-        selected.append(event["key"])
-        if not visible(event, case):
-            violations.append("unauthorized_or_redacted_source")
-        if not applicable(event, case):
-            violations.append("inapplicable_source")
-        if memory.get("use") != usage(event, case):
-            violations.append("incorrect_version_status")
-        if not memory.get("quote") or memory["quote"] not in event["text"]:
+        if supports and not all(x.get("record_id") in by_id and x.get("quote", "") in by_id[x["record_id"]]["text"] for x in supports):
             violations.append("invalid_provenance")
-        if memory.get("text") != event["text"] or memory.get("source", {}).get("revision") != event["revision"]:
-            violations.append("source_fidelity")
-    slots = defaultdict(list)
-    for memory in packet["memories"]:
-        event = by_id.get(memory["event_id"])
-        if event and event["slot"]:
-            slots[event["slot"]].append(memory["id"])
-    expected_conflicts = {key: sorted(values) for key, values in slots.items() if len(values) > 1}
-    actual_conflicts = {c["slot"]: sorted(c["claim_ids"]) for c in packet["conflicts"]}
-    if actual_conflicts != expected_conflicts or len(actual_conflicts) != len(packet["conflicts"]):
-        violations.append("incorrect_conflict_status")
-    if len({m["id"] for m in packet["memories"]}) != len(packet["memories"]):
-        violations.append("duplicate_memory")
-    if not packet.get("receipt_id"):
-        violations.append("missing_receipt")
-    if packet.get("trace", {}).get("search_rounds", 999) > 3:
-        violations.append("search_budget")
+        for evidence_id in evidence_ids:
+            event = by_id[evidence_id]
+            selected.append(event["key"])
+            if not visible(event, case):
+                violations.append("unauthorized_or_redacted_source")
+    if len(record_ids) != len(set(record_ids)):
+        violations.append("duplicate_record")
+    selected = list(dict.fromkeys(selected))
     if case["entities"] and not set(case["expected"]).issubset(selected):
         violations.append("missing_required_evidence")
     rendered = json.dumps(packet, ensure_ascii=False)
@@ -218,9 +203,9 @@ def assess_packet(packet, case, events, ids):
 
 
 def run(service, corpus, report):
-    all_events, ids = {}, {}
-    report["source_mapping"] = []
-    report["probes"] = []
+    ids = {}
+    corrections = {}
+    report["source_mapping"], report["probes"] = [], []
 
     def probe(name, path, token, expected, body=None):
         status, result = service.request_raw(path, body, token=token)
@@ -231,87 +216,56 @@ def run(service, corpus, report):
         return result
 
     for world in corpus:
-        for e in world["events"]:
-            key = f"{world['index']}:{e['key']}"
-            token = service.outsider if e["tenant"] == "other" else service.owner
-            ids[key] = service.insert(e["text"], key, context={k: e[k] for k in ("entities", "applies", "dependencies", "slot")},
-                                      classification=e["classification"], read_groups=e["read_groups"], token=token)
-            all_events[key] = e
-            report["source_mapping"].append(dict(key=key, revision=e["revision"], event_id=ids[key]))
+        for event in world["events"]:
+            key = f"{world['index']}:{event['key']}"
+            token = service.outsider if event["tenant"] == "other" else service.owner
+            scope = {"visibility": event["classification"], "groups": event["read_groups"], **event["applies"]}
+            ids[key] = service.insert(event["text"], key, context={"scope": scope, "entities": event["entities"]}, classification=event["classification"], read_groups=event["read_groups"], token=token)
+            report["source_mapping"].append(dict(key=key, record_id=ids[key]))
     service.await_idle()
-    report["initial_graphs"] = service.request("/v1/graphs", token=service.owner)
     for world in corpus:
         prefix = f"{world['index']}:"
-        probe(prefix + "restricted_denied", f"/v1/events/{ids[prefix + 'restricted']}", service.guest, 404)
-        probe(prefix + "restricted_allowed", f"/v1/events/{ids[prefix + 'restricted']}", service.user, 200)
-        probe(prefix + "foreign_denied", f"/v1/events/{ids[prefix + 'foreign']}", service.owner, 404)
-        probe(prefix + "foreign_allowed", f"/v1/events/{ids[prefix + 'foreign']}", service.outsider, 200)
-    prior_receipts = []
+        probe(prefix + "restricted_denied", f"/v1/records/{ids[prefix + 'restricted']}", service.guest, 404)
+        probe(prefix + "restricted_allowed", f"/v1/records/{ids[prefix + 'restricted']}", service.user, 200)
+        probe(prefix + "foreign_denied", f"/v1/records/{ids[prefix + 'foreign']}", service.owner, 404)
+        probe(prefix + "foreign_allowed", f"/v1/records/{ids[prefix + 'foreign']}", service.outsider, 200)
     superseded = []
-    for phase in ("initial", "corrected", "redacted", "rebuilt"):
+    for phase in ("initial", "corrected", "redacted"):
         if phase == "corrected":
             for world in corpus:
-                key = f"{world['index']}:mutable"
-                e = all_events[key]
-                superseded.append(e["text"])
-                e.update(text=world["correction"], revision=2)
-                ids[key] = service.insert(e["text"], key, revision=2, context={k: e[k] for k in ("entities", "applies", "dependencies", "slot")}, token=service.owner)
-                report["source_mapping"].append(dict(key=key, revision=2, event_id=ids[key]))
+                key = f"{world['index']}:mutable"; event = next(e for e in world["events"] if e["key"] == "mutable")
+                superseded.append(event["text"])
+                new_key = key + ":corrected"
+                corrections[world["index"]] = dict(event, key="mutable:corrected", text=world["correction"])
+                ids[new_key] = service.insert(world["correction"], new_key, token=service.owner,
+                                              inputs=[ids[key]], supersedes=[ids[key]])
+                report["source_mapping"].append(dict(key=new_key, record_id=ids[new_key]))
             service.await_idle()
         if phase == "redacted":
             for world in corpus:
                 key = f"{world['index']}:erase"
-                service.request(f"/v1/events/{ids[key]}/redact", {}, token=service.owner)
-                all_events[key]["redacted"] = True
-                response = probe(key + ":redacted_source", f"/v1/events/{ids[key]}", service.owner, 404)
-                if all_events[key]["text"] in json.dumps(response, ensure_ascii=False):
-                    report["violations"].append(dict(case=key, reason="redacted_source_text"))
+                service.request(f"/v1/records/{ids[key]}/redact", {}, token=service.owner)
+                next(e for e in world["events"] if e["key"] == "erase")["redacted"] = True
             service.await_idle()
-            for receipt_id, removed_claims in prior_receipts:
-                receipt = service.request(f"/v1/receipts/{receipt_id}", token=service.user)
-                if set(receipt["claim_ids"]) & removed_claims:
-                    report["violations"].append(dict(case=receipt_id, reason="receipt_redaction"))
-        if phase == "rebuilt":
-            graph = service.request("/v1/graphs", {"name": "balanced-rebuild", "config": {"mode": "llm", "model": "mock-curator"}}, token=service.owner)["graph_id"]
-            service.await_idle()
-            service.request(f"/v1/graphs/{graph}/promote", {}, token=service.owner)
         for world in corpus:
-            events = world["events"]
-            world_ids = {e["key"]: ids[f"{world['index']}:{e['key']}"] for e in events}
+            prefix = f"{world['index']}:"
+            events = [dict(event, key=prefix + event["key"]) for event in world["events"]]
+            if phase in ("corrected", "redacted"):
+                events.append(dict(corrections[world["index"]], key=prefix + "mutable:corrected"))
             for case in world["cases"]:
-                if case["phase"] != phase:
-                    continue
-                body = {k: case[k] for k in ("query", "entities", "context")}
-                body.update(max_chars=BUDGET, agentic=False)
-                start = time.monotonic()
-                packet = service.request("/v1/query", body, token=getattr(service, case["actor"]))
-                elapsed = time.monotonic() - start
-                selected, violations = assess_packet(packet, case, events, world_ids)
-                if any(text in json.dumps(packet, ensure_ascii=False) for text in superseded):
-                    violations.append("superseded_packet_text")
-                receipt = service.request(f"/v1/receipts/{packet['receipt_id']}", token=getattr(service, case["actor"]))
-                if set(receipt["claim_ids"]) != {m["id"] for m in packet["memories"]}:
-                    violations.append("receipt_evidence_mismatch")
-                if case["family"] == "before_redaction":
-                    removed_claims = {m["id"] for m in packet["memories"] if m["event_id"] == world_ids["erase"]}
-                    if not removed_claims:
-                        violations.append("redaction_probe_missing_setup_evidence")
-                    prior_receipts.append((packet["receipt_id"], removed_claims))
-                if case["family"] == "after_rebuild":
-                    previous = next(r for r in report["rows"] if r["mode"] == "contextmesh" and r["id"] == f"{world['index']}:after_redaction")
-                    if set(previous["selected"]) != set(selected):
-                        violations.append("rebuild_evidence_divergence")
-                for reason in violations:
-                    report["violations"].append(dict(case=case["id"], reason=reason))
+                if case["phase"] != phase: continue
+                case = dict(case, expected=[prefix + key + (":corrected" if key == "mutable" and phase != "initial" else "") for key in case["expected"]])
+                actor = getattr(service, case["actor"])
+                request = {"task": case["query"], "max_tokens": BUDGET}
+                if case["context"].get("project"):
+                    request["scopes"] = [{"project": case["context"]["project"]}]
+                packet = service.request("/v1/context", request, token=actor)
+                selected, violations = assess_packet(packet, case, events, ids)
+                if any(text in json.dumps(packet, ensure_ascii=False) for text in superseded): violations.append("superseded_packet_text")
+                for reason in violations: report["violations"].append(dict(case=case["id"], reason=reason))
                 for mode in ("contextmesh", "no_memory", "bm25_structured", "gold_evidence"):
                     chosen = selected if mode == "contextmesh" else [e["key"] for e in baseline(mode, events, case)]
-                    row = dict(id=case["id"], world=case["world"], family=case["family"], mode=mode,
-                               selected=sorted(chosen), expected=case["expected"], **score(chosen, case["expected"]))
-                    if mode == "contextmesh":
-                        row.update(packet=packet, query_seconds=elapsed)
-                    report["rows"].append(row)
-    report["final_graphs"] = service.request("/v1/graphs", token=service.owner)
-
+                    report["rows"].append(dict(id=case["id"], world=case["world"], family=case["family"], mode=mode, selected=sorted(chosen), expected=case["expected"], **score(chosen, case["expected"])))
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

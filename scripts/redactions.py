@@ -34,30 +34,30 @@ if not identity['admin'] or identity['agent']:
     raise SystemExit('An owner identity is required.')
 if args.operation == 'export':
     after = 0
-    events = []
+    records = []
     while True:
         page = request(f'/v1/redactions?after={after}')
-        events.extend(e['event_id'] for e in page['events'])
-        if not page['events']:
+        records.extend(r['record_id'] for r in page['records'])
+        if not page['records']:
             break
         after = page['next_after']
-    data = {'schema': 1, 'tenant_id': identity['tenant'], 'event_ids': events}
+    data = {'schema': 2, 'tenant_id': identity['tenant'], 'record_ids': records}
     with args.file.open('x') as output:
         json.dump(data, output, indent=2)
         output.write('\n')
-    print(json.dumps({'exported': len(events), 'file': str(args.file)}))
+    print(json.dumps({'exported': len(records), 'file': str(args.file)}))
 else:
     data = json.loads(args.file.read_text())
-    if data.get('schema') != 1 or data.get('tenant_id') != identity['tenant']:
+    if data.get('schema') != 2 or data.get('tenant_id') != identity['tenant']:
         raise SystemExit('Ledger schema or tenant mismatch; no mutations performed.')
-    ids = [str(uuid.UUID(value)) for value in data['event_ids']]
+    ids = [str(uuid.UUID(value)) for value in data['record_ids']]
     if not args.execute:
         print(json.dumps({'dry_run': True, 'redactions': len(ids), 'tenant_id': identity['tenant']}))
     else:
         applied = absent = 0
-        for event in ids:
+        for record in ids:
             try:
-                request('/v1/events/' + event + '/redact', post=True)
+                request('/v1/records/' + record + '/redact', post=True)
                 applied += 1
             except urllib.error.HTTPError as error:
                 if error.code == 404:

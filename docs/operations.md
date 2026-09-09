@@ -1,117 +1,75 @@
-# Operator runbook
+# Operations
 
-## Launch and expand
+## Deployment and identities
 
-Start with one `contextmesh run` process and managed PostgreSQL. For expansion, deploy `contextmesh serve` replicas behind an HTTPS load balancer and independent `contextmesh worker` replicas. There is no sticky-session requirement. Give each instance the same tenant issuer configuration and gateway settings. Each process has its own PostgreSQL pool; sum `pool_size` across API and worker processes when sizing database connections. A transaction-mode connection pooler can help, since tenant context is transaction-local.
+Start with the combined `contextmesh run` process and PostgreSQL. Split `serve` and `worker` processes when API or curation load warrants independent scaling. Apply migrations as a separate deployment step using `cm_owner`; grant runtime rights with `scripts/grants.sql` and run the service as `cm_runtime`. Runtime credentials must be neither database superusers nor BYPASSRLS roles.
 
-Use a separate `cm_owner` migration role and `cm_runtime` application role. The supplied grants script assumes those role names. Apply migrations once per release and then grants. Never run application traffic as a PostgreSQL superuser, table-owner migration credential, or BYPASSRLS role. Place PostgreSQL on a private network with encrypted transport and credentials supplied by your deployment secret manager.
+Configure each tenant with an OIDC issuer, audience, and JWKS URL. Okta custom authorization-server access tokens supply the person subject and group claims. The configured administrative group defaults to `contextmesh-admins`. Group names are used directly; ContextMesh does not infer an organizational hierarchy from them.
 
-The supplied Compose stack is a loopback development deployment with intentionally recognizable local credentials. Production uses managed PostgreSQL, `config/production.example.json` adapted to your issuer, no `dev_tokens`, and no `--allow-dev-auth`. The container runs as a non-root user. Termination drains HTTP requests and lets bounded worker requests finish; allow at least 60 seconds for worker shutdown and up to 240 seconds for in-flight query drain.
+Development tokens are allowed only with `--allow-dev-auth`. Never enable that flag in production. Example configurations are in `config/`.
 
-## Okta
+People create short-lived delegated agent tokens through `POST /v1/agents`. An agent acts for its person and reads their current stored groups; it cannot delegate again or perform administrative actions. Revoke an individual token through `/v1/agents/{id}/revoke`, or suspend a principal through `/v1/principals/status`.
 
-Use a **custom authorization server**, an audience dedicated to ContextMesh, and a groups claim in access tokens. Configure the exact issuer, audience, JWKS URL, and owner group. Verify with `contextmesh request /v1/identity`. ContextMesh validates RS256 signatures, issuer, audience, expiry, and not-before; it does not accept unsigned tokens or trust a tenant in a request body. [Okta authorization servers](https://developer.okta.com/docs/concepts/auth-servers/) and [groups claims](https://developer.okta.com/docs/guides/customize-tokens-groups-claim/main/).
+OIDC group changes become visible when the person's token is processed again or an operator updates status. This release does not implement background Okta/SCIM synchronization. Local revocation increments the tenant security epoch, checked before context/inference output is committed.
 
-JWKS are cached for five minutes; publish old and new keys with an overlap during rotation. Access tokens should be short-lived. Person group membership refreshes when a valid person token is presented. Agents use that stored membership; local suspension immediately disables both the person and their agents. Connect your existing identity lifecycle system to `/v1/principals/status` if suspension must happen before JWT expiration/session refresh. ContextMesh does not call Okta management APIs or SCIM.
+## Inference and curation
 
-An identity owner can delegate via `/v1/agents`; tokens are hashed at rest and returned only at creation. Delegation cannot produce owner privileges. Revoke compromised tokens through their agent ID. The tenant-wide security epoch invalidates queries racing with revocation.
+Set `CONTEXTMESH_MODEL_URL` to an OpenAI-compatible `/v1` gateway, `CONTEXTMESH_MODEL` to the selected curator model, and `CONTEXTMESH_MODEL_KEY` to its credential. The gateway uses JSON chat completions and bounded responses. Prompts, responses, provider errors, and credentials must not be logged.
 
-## Inference configuration
+Without a configured gateway, capture/context work over original records. With one, new captured records schedule curation jobs. Workers read chronological conversation material and relevant notes, preserve the actual input manifest, and append new records. Generated notes are not automatically re-enqueued. Model changes apply to later runs; prior notes retain their recorded derivation identity. Gateway aliases should resolve to stable model versions when reproducibility matters.
 
-- `CONTEXTMESH_MODEL_URL`: OpenAI-compatible base URL ending in `/v1`.
-- `CONTEXTMESH_MODEL`: default model identifier, resolved into new graph configurations.
-- `CONTEXTMESH_MODEL_KEY`: optional gateway bearer key.
+Inspect `/v1/status`, `/v1/jobs`, and `/v1/metrics` for backlog, failures, and queue age. Jobs retain bounded attempts and leases so workers can recover after process failure. A failure or malformed model response never publishes a partial note. Queue state is the only curation lifecycle; records do not have pending/active/promoted flags.
 
-The service calls `/chat/completions` with JSON response mode, bounded output tokens, and graph-specific temperature/model settings. Gateway calls are part of normal operation, including maintenance and approved restricted-evidence evaluation. The deployment's gateway therefore receives the evidence needed for those operations. ContextMesh does not log those bodies or persist provider error text. Configure gateway logging/retention consistently with your organization's data policy.
+The current worker processes bounded windows and reports coverage in derivation metadata. Do not interpret a bounded window as a guaranteed complete re-read of every historical message. Evaluate long conversations and curation cost against your workload before increasing limits.
 
-Provider transport or schema failures retry through the worker queue. Queries degrade to bounded deterministic retrieval if planning fails; release evaluation fails closed by returning no unapproved guidance. The current gateway adapter uses Chat Completions, not a proprietary sessions protocol.
+## Release policies
 
-## Inspect and repair
-
-With an owner token:
-
-```sh
-contextmesh request /v1/status
-contextmesh request /v1/jobs
-contextmesh request '/v1/events?search=forecast'
-contextmesh request '/v1/audit?after=0'
-contextmesh request /v1/lineage/SOURCE_OR_CLAIM_UUID
-```
-
-Source search works before curation finishes. Audit entries identify the person, delegated agent, source event, curation job, and graph. Lineage gives the exact source quote and immutable graph configuration. Query receipts identify surviving accessible claims; they intentionally do not archive answer text or restricted reasoning.
-
-Correct a source by submitting a higher revision using the same `source` and `external_id`. Graphs update incrementally. Earlier revisions remain owner-auditable and stop participating in retrieval. Never edit the underlying source row to make a correction.
-
-## Rebuild and promote
-
-Create a JSON file containing the configuration shown in the API guide, then:
-
-```sh
-contextmesh request --method POST --body graph.json /v1/graphs
-contextmesh request /v1/graphs
-contextmesh request --method POST /v1/graphs/GRAPH_UUID/promote
-```
-
-A rebuild backfills current evidence in batches while ingestion continues. Queries can explicitly select the new graph before promotion for inspection. Promotion rejects graphs with pending or failed work. Retry failed jobs after addressing a gateway/configuration issue:
-
-```sh
-contextmesh request --method POST /v1/graphs/GRAPH_UUID/retry
-```
-
-Configurations cannot be edited in place; create another graph for changed extraction rules. Archive an inactive graph when you no longer need incremental maintenance. Multiple graphs amplify inference cost, so maintain only the useful versions.
-
-## Restrict or remove information
-
-To retroactively mark a source restricted, write:
+An administrator approves a bounded disclosure rule:
 
 ```json
-{"classification":"restricted","read_groups":["finance"]}
+{
+  "name": "capacity-guidance",
+  "purpose": "capacity-planning",
+  "audiences": ["engineering"],
+  "instruction": "Choose conservative when the evidence requires preserving current capacity; otherwise abstain.",
+  "outputs": {"conservative": "Plan within the current approved capacity envelope."},
+  "evidence": ["1d5f325a-8158-4f5b-abfe-cd47391163eb"]
+}
 ```
 
-Then:
+Creation is approval. A separate evaluator may inspect exactly the approved record evidence, including inherited restrictions, and select an approved output key or abstain. The caller receives only the corresponding literal output text. No unrestricted model paraphrase or hidden provenance is released. The choice itself conveys information, so approval authorizes that disclosure.
+
+Supersession, reclassification, and redaction invalidate affected policies. Reapproval creates a policy with current evidence. Explicit revoke disables the rule immediately. Administrative policy metadata is never included in ordinary context results.
+
+## Redaction and reclassification
+
+`POST /v1/records/{id}/classification` changes only visibility/groups; it never changes content or project/conversation identity. Derived records remain subject to the current access restrictions of every input ancestor. Dependent release approvals are invalidated.
+
+`POST /v1/records/{id}/redact` makes the record and its dependent records unavailable across context, direct reads, and curation. Tombstone IDs and content-free audit information remain. The operation is irreversible, and reusing a deleted ID is rejected. Privacy mutation and worker publication serialize so an in-flight extraction cannot revive removed material.
+
+The retrievability guarantee applies to the service, not information already sent to a client or inference gateway. Operators control those systems' retention. Restore procedures must apply later deletions before opening the restored service.
+
+## Backup and restore
+
+Back up PostgreSQL, deployment configuration, and a separately retained content-free deletion export. Never include API keys in deletion exports or evaluation artifacts.
 
 ```sh
-contextmesh request --method POST --body classification.json /v1/events/EVENT_UUID/classification
+python3 scripts/redactions.py export deletions.json
 ```
 
-The operation affects all revisions, and all graph reads immediately honor the new classification. Dependent release policies are disabled until explicitly reapproved.
-
-To remove the source from retrieval:
+After restoring a backup, keep access restricted to operators. Point `CONTEXTMESH_URL` and `CONTEXTMESH_TOKEN` at the restored service and inspect the deletion replay:
 
 ```sh
-contextmesh request --method POST /v1/events/EVENT_UUID/redact
+python3 scripts/redactions.py apply deletions.json
+python3 scripts/redactions.py apply deletions.json --execute
 ```
 
-Redaction applies to the whole source revision family and all graph versions. It clears raw payloads, removes projected claims/edges, cancels jobs, removes dependent release payloads, and invalidates racing queries. It is idempotent and irreversible. Owners also lose access to the payload. Preserve required context through an explicitly authored, separately reviewed replacement source if needed; redacted source identities cannot be revived.
+The ledger is tenant-bound. Reapply all deletion exports newer than the snapshot, inspect failures, and verify record/context denial before reopening access. A database snapshot cannot discover deletion requests that occurred after it was created. Local harness outboxes and previously exported transcripts require their own retention controls.
 
-`GET /v1/redactions` exports identifiers without content. The helper script can export a ledger and reapply it to an isolated restored database through the service:
+Migration 0003 replaces the pre-release event/claim/graph schema and intentionally discards its knowledge. It is not a migration for preserving prior production data. Export required earlier material before deployment or create a fresh database.
 
-```sh
-python3 scripts/redactions.py export redactions.json
-python3 scripts/redactions.py apply redactions.json
-python3 scripts/redactions.py apply redactions.json --execute
-```
+## Audit and limits
 
-Apply defaults to a dry run. The helper verifies tenant identity. Retain a current redaction ledger outside any older database snapshot you might restore.
+`GET /v1/audit` returns identifiers and operational metadata; it does not retain source text or full context responses. `GET /v1/records/{id}` provides authorized lineage. There is no persisted context session or receipt database.
 
-## Backups and recovery
-
-Use managed PostgreSQL backups and point-in-time recovery. A normal restore to the latest committed state retains redactions. For restoration to an earlier point: keep the restored service inaccessible, replay the newer redaction ledger, verify sensitive canaries through source search and every retained graph, then enable traffic. An old snapshot alone cannot know about later redactions. WAL/backup bytes and external gateway/client copies are outside the application's retrievability guarantee.
-
-Workers can be restarted without job loss. Leases recover after 60 seconds. `failed` jobs require investigation and explicit retry; do not endlessly requeue them. Audit and source tombstones remain authoritative when a projection is discarded.
-
-## Monitor
-
-`/health` is liveness, `/ready` tests database access. `/v1/metrics` exposes tenant job counts and oldest pending-job age in Prometheus text format using an owner credential. `/v1/status` and `/v1/jobs` provide operator-friendly JSON. Logs identify tenant/job failures without including source payloads.
-
-Alert on readiness failure, failed jobs, sustained queue age, elevated HTTP 429 rates, database saturation, and frequent `context_changed_retry`. Observe gateway latency/cost separately. Monitor both queue depth and inference throughput before increasing workers; an overloaded gateway will not improve with more retries.
-
-## Safe deployment sequence
-
-1. Back up PostgreSQL; export the current redaction ledger when restoring older snapshots is possible.
-2. Apply new migrations using the migration identity and apply runtime grants.
-3. Deploy workers and APIs with the same configuration. Preserve backward compatibility during rolling upgrades.
-4. Check readiness, source capture, query, and queue progress using a non-sensitive canary.
-5. Retire old replicas after in-flight work drains.
-
-There is no schema rollback command that might silently discard evidence. Prefer forward repair migrations and application rollback only when the newer schema remains compatible.
+All lineage traversal, retrieval, upload, output, and inference paths are bounded. Overflow must fail closed rather than disclose partially checked ancestry. Observe queue age, inference spend, and rejection rates when scaling. The application supports multiple API/worker processes against one PostgreSQL writer; company-wide throughput is an evaluation target, not an established benchmark result.

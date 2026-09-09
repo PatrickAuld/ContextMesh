@@ -1,4 +1,7 @@
-use crate::{auth::Identity, error::Result};
+use crate::{
+    auth::Identity,
+    error::{Error, Result},
+};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -18,6 +21,13 @@ pub async fn lock(tx: &mut Transaction<'_, Postgres>, tenant: Uuid) -> Result<i6
             .fetch_one(&mut **tx)
             .await?,
     )
+}
+pub async fn lock_as(tx: &mut Transaction<'_, Postgres>, who: &Identity) -> Result<i64> {
+    let epoch = lock(tx, who.tenant).await?;
+    if epoch != who.security_epoch {
+        return Err(Error::conflict("context_changed_retry"));
+    }
+    Ok(epoch)
 }
 pub async fn audit(
     tx: &mut Transaction<'_, Postgres>,

@@ -1,91 +1,18 @@
 # Runnable evaluations
 
-The [evaluation strategy](../docs/evaluation.md) is the broader roadmap. This
-directory implements its first, zero-provider-cost execution tier. GitHub
-Actions runs the compiled service against PostgreSQL and preserves JSON results.
+These evaluations exercise the compiled service over HTTP with PostgreSQL. They are deterministic evidence-selection checks, not measurements of inference quality or downstream answer accuracy.
 
-## Balanced first-party design: CMES paired v1
+`balanced.py` generates independent fictitious worlds with positive, negative, authorization, tenant, explicit correction, redaction, and lexical-distractor cases. It compares ContextMesh with no-memory, a dependency-free lexical baseline, and a gold-evidence upper-bound control. The lexical baseline is labeled `bm25_structured` because it applies the synthetic suite's visibility and scope oracle before ranking; it is not a plain production BM25 system. ContextMesh receives no gold labels.
 
-The question is: **does the service return the evidence that applies, preserve
-uncertainty, and suppress invalid evidence under a controlled change?** This is
-an evidence-stage experiment, not a measurement of an LLM's extraction or task
-completion abilities.
+The service contract no longer has conflict slots, dependency-version status, graphs, or receipts. The runner does not reconstruct those semantics. Version-like and conflicting source texts remain ordinary retrieval cases and are not treated as special product capabilities.
 
-`balanced.py` generates eight independent fictitious worlds by default. Each
-world has 21 query cases, with counterfactual siblings that change one relevant
-condition. Source insertion order and numeric values vary with the seed. All
-systems see the same source history and query metadata; gold labels never enter
-the query or curator prompt.
+The 16,000-unit limit uses ContextMesh's documented conservative UTF-8 byte budget for `context_text`; baseline packing counts source characters. These generated worlds normally fit, so the comparison is not a binding-budget claim. No reader model or model judge runs.
 
-| Family | Useful-memory case | Counterfactual/control |
-|---|---|---|
-| Recall | Direct question; indirect question with a supplied entity | Unanswerable query; lexically similar draft |
-| Applicability | Production procedure | Staging procedure; missing project |
-| Versions | Exact dependency version | Changed or missing version requires revalidation |
-| Conflicts | Both independently sourced values | Must expose the conflicting slot, not choose a winner |
-| Authorization | Authorized group member and owner | Same-tenant nonmember; other-tenant canary |
-| Corrections | Original route | Revised route replaces current evidence |
-| Redaction | Two independent sources | Remove one; retain the other; repeat after rebuild |
+Reports contain evidence recall, precision, exact-set match, and false activation. Bootstrap intervals resample whole generated worlds with a fixed seed. Eight default worlds are a regression smoke test, not a power analysis or evidence of product superiority. Seeds are public and none are held out. Hard violations cover unauthorized or redacted content, unknown records, duplicate records, superseded text, and missing evidence on designated positive probes.
 
-Every world is evaluated in four modes: ContextMesh, no memory, a BM25 baseline,
-and gold evidence. The BM25 baseline receives the same structured visibility,
-applicability, version metadata, and entity-overlap priority as ContextMesh's deterministic curator. It
-is deliberately labeled `bm25_structured`; it is not an unaided text-only RAG
-system. The gold-evidence mode is an upper-bound control, not a competitor.
-The baseline implementation does not inspect `expected` except in gold mode.
+The deterministic gateway checks transport and curator input-manifest conformance. It does not establish entailment, extraction accuracy, implicit discovery, learned temporal reasoning, or negative transfer. Public retrieval adapters and their limits are documented in [PUBLIC.md](PUBLIC.md).
 
-The context ceiling is 16,000 characters. These small worlds fit below that
-ceiling, so differences are evidence selection rather than context truncation.
-ContextMesh's packet-metadata accounting differs from the baseline's source-text
-accounting; this experiment does not claim a comparison at a binding token budget.
-No reader model, retries of generated answers, or model judge is involved.
-
-### Scoring and gates
-
-- Evidence recall and precision are separate metrics. An empty result on a
-  positive case scores zero for both. Negative cases have no recall denominator
-  and instead measure false activation. Exact evidence-set match is also reported.
-- Version flags, conflict slots, source revisions, exact quotes, receipt links,
-  source-read permissions, redaction, and rebuild parity have deterministic
-  oracles. Missing required evidence on the explicit-entity contract probes is
-  a failure, so a deny-all service cannot pass the gate.
-- Ordinary retrieval distractors lower precision; they do not count as a security
-  breach. Unauthorized, redacted, inapplicable, or superseded evidence and stale
-  guidance marked applicable are hard failures. Quality cannot offset a hard
-  failure.
-- Report per-family results and paired recall differences. Bootstrap resampling
-  uses entire worlds, retaining sibling dependence, with 1,000 seeded replicates.
-  These intervals describe the generated suite, not a production population.
-  Eight worlds are a smoke experiment, not a power analysis or evidence of
-  statistically established product superiority. We do not apply an independent
-  Bernoulli `3/n` safety bound to correlated synthetic probes.
-
-The frozen corpus, hash, seed, generator version, source-to-event mapping, commit,
-fixture hash, graph configurations, raw packets, receipts, timings, per-case
-scores, and violations accompany the report. Failures preserve partial artifacts
-and exit nonzero. Seeds are public regression inputs; **none is a held-out set**.
-Freeze a separate challenge generator and primary metric before tuning quality.
-
-### Boundaries
-
-The fixture supplies correct structured claims through the same HTTP gateway
-contract as real inference. This isolates the service from model variance; it
-does not establish semantic entailment, extraction accuracy, implicit entity
-discovery, learned temporal reasoning, or downstream negative transfer. The
-version checks cover the current API's exact dependency contract, not bitemporal
-`as_of` semantics. Rebuild checks compare semantic evidence, not randomly generated
-claim IDs. Existing `tests/e2e.py` remains the broader race/recovery/OIDC suite.
-
-Public retrieval adapters and their comparability limits are described in
-[PUBLIC.md](PUBLIC.md). CI commands and artifact instructions are in [CI.md](CI.md).
-Dense retrieval, rerankers, learned curation, calibrated reader/judge scoring,
-MemoryAgentBench, MEME, HaluMem, and downstream task benchmarks remain subsequent
-work; this implementation does not fabricate scores for them.
-
-## Local invocation
-
-With the compiled binary and disposable database configured as in
-[system validation](../docs/testing.md):
+Run locally with a compiled binary and disposable owner/runtime database roles:
 
 ```sh
 python3 -m unittest discover -s evals -p 'test_*.py'

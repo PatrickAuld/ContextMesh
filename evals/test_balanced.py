@@ -1,7 +1,10 @@
 import copy
 import unittest
 
-from balanced import assess_packet, baseline, generate, score, summarize, usage, visible
+try:
+    from .balanced import assess_packet, baseline, generate, score, summarize, visible
+except ImportError:
+    from balanced import assess_packet, baseline, generate, score, summarize, visible
 
 
 class BalancedTests(unittest.TestCase):
@@ -46,19 +49,26 @@ class BalancedTests(unittest.TestCase):
         next(e for e in erased if e["key"] == "prod")["redacted"] = True
         self.assertEqual(baseline("gold_evidence", erased, case), [])
 
-    def test_version_unknown_and_changed_require_revalidation(self):
-        event = next(e for e in self.events if e["key"] == "version")
-        self.assertEqual(usage(event, self.cases["version_match"]), "applicable")
-        self.assertEqual(usage(event, self.cases["version_changed"]), "revalidate")
-        self.assertEqual(usage(event, self.cases["version_missing"]), "revalidate")
+    def test_no_scope_filter_admits_both_project_records(self):
+        case = self.cases["no_scope_filter"]
+        selected = [event["key"] for event in baseline("gold_evidence", self.events, case)]
+        self.assertEqual(set(selected), {"prod", "stage"})
 
-    def test_scorer_catches_leak_and_version_misuse(self):
+    def test_project_filter_excludes_sibling_scope(self):
+        case = self.cases["scope_match"]
+        selected = [event["key"] for event in baseline("gold_evidence", self.events, case)]
+        self.assertEqual(selected, ["prod"])
+
+    def test_lexical_baseline_does_not_use_private_entity_annotations(self):
+        case = dict(self.cases["direct"], query="tokens absent from every document")
+        self.assertEqual(baseline("bm25_structured", self.events, case), [])
+
+    def test_scorer_does_not_invent_removed_version_status(self):
         event = next(e for e in self.events if e["key"] == "version")
-        memory = dict(id="claim", event_id="source", text=event["text"], quote=event["text"],
-                      use="applicable", source={"revision": 1})
-        packet = dict(memories=[memory], conflicts=[], receipt_id="r", trace={"search_rounds": 1})
+        memory = dict(id="source", content=event["text"], use="applicable")
+        packet = dict(records=[memory])
         _, failures = assess_packet(packet, self.cases["version_changed"], [event], {"version": "source"})
-        self.assertIn("incorrect_version_status", failures)
+        self.assertNotIn("incorrect_version_status", failures)
         event = dict(event, redacted=True)
         _, failures = assess_packet(packet, self.cases["version_match"], [event], {"version": "source"})
         self.assertIn("unauthorized_or_redacted_source", failures)

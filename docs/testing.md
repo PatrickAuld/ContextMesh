@@ -1,36 +1,21 @@
 # System validation
 
-The primary suite is `tests/e2e.py`. It talks to compiled Rust processes over HTTP and stdio, uses real PostgreSQL, and controls inference through a local OpenAI-compatible HTTP server. It starts two API processes and two worker processes with two workers each. It does not import Rust handlers or substitute an in-memory database.
+The primary suite is `tests/e2e.py`. It talks to compiled Rust service processes over HTTP and stdio, uses real PostgreSQL, and controls inference through a local OpenAI-compatible gateway. It does not substitute an in-memory database.
 
-The workflow `.github/workflows/system-tests.yml` creates a PostgreSQL 16 service, separate migration/runtime roles, builds the application, and runs the suite on pushes and pull requests. Formatting and strict Clippy are required before the black-box run.
+CI provisions PostgreSQL 16 and separate migration/runtime roles. Formatting, strict Clippy, compilation, and Rust unit tests precede process-level tests. The suite targets record identity, atomic append, lineage, scope isolation, supersession, privacy invalidation, delegated authentication, curation publication, and process recovery. The exact scenarios and assertions are executable in the test source; missing behavior must not be inferred from a successful compilation.
 
-Scenarios cover:
-
-- Opaque agent delegation, provenance, revocation, and prevention of delegated administration.
-- Cross-tenant API isolation and PostgreSQL row-security enforcement on an unscoped runtime connection.
-- Concurrent idempotent ingestion through two API replicas, revision conflict detection, and source correction.
-- Rebuilds with different model instructions, simultaneous graph versions, incremental updates, and promotion.
-- Applicability, version-sensitive revalidation, and explicit conflict slots.
-- Restricted evidence invisibility; approved release output; rejection of unknown model outputs; retroactive classification invalidation.
-- Redaction across projections, receipts, source history, and subsequent rebuilds.
-- Redaction while curation or privileged query inference is in flight.
-- Transient inference retries, invalid grounding, failed-job state, and operator retry.
-- Killing every worker process during curation and reclaiming actual expired leases, without manually changing database state.
-- OIDC RS256 signatures, audience/issuer/expiry checks, group refresh, and person suspension.
-- MCP as a separate stdio process and operational CLI requests.
-- Audit immutability, lineage, source search, and absence of sensitive canaries from application logs.
-- Durable client capture while an API process is down, replay after restart, and rejection quarantine.
-- Owner metrics and classification controls.
-
-The suite requires a disposable, empty database. It initializes its own tenant identities and source history. Export `DATABASE_URL` for a non-superuser runtime role and `MIGRATION_DATABASE_URL` for the migration owner; use `scripts/grants.sql` after the first migration. Then:
+Use a disposable database, export `DATABASE_URL` for the non-superuser runtime role and `MIGRATION_DATABASE_URL` for the migration owner, apply migrations and `scripts/grants.sql`, then:
 
 ```sh
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo build --locked
+cargo test --locked
 python3 tests/e2e.py
+python3 -m unittest discover -s evals -p 'test_*.py'
+python3 evals/balanced.py --output eval-results/balanced.json
 ```
 
-Python 3.10+, `psql`, and `openssl` are required. The inference gateway and OIDC signing key are test fixtures, not production credentials. A real 60-second lease-recovery test intentionally contributes about one minute to runtime. Optional `CONTEXTMESH_TEST_LOG_DIR` preserves process logs for debugging. CI uploads only process logs on failure, not signing keys or source fixture files.
+Python 3.10+, `psql`, and `openssl` are required. Gateway behavior and OIDC signing keys are fixtures. `CONTEXTMESH_TEST_LOG_DIR` preserves process logs for failure investigation; do not publish keys or private transcripts.
 
-These tests establish service orchestration, persistence, access boundaries, and operational behavior. They do not establish extraction accuracy with a real model, information-theoretic safety of an operator-approved policy, Okta production-tenant connectivity, or company-wide throughput. Those require evaluation with your actual gateway, identity configuration, and representative workload.
+Balanced evaluations compare paired generated worlds against no-memory, BM25, and oracle controls. Public runs compare evidence retrieval using a pinned dataset. Those results do not establish final-answer accuracy or real-model extraction quality. Keep infrastructure conformance, retrieval results, and actual gateway-model evaluations separate. See [evaluation strategy](evaluation.md) and [CI setup](../evals/CI.md).

@@ -14,7 +14,7 @@ The default modes are:
 - `no-memory`: an empty retrieval packet;
 - `full-history`: all history only when it fits; otherwise explicitly unavailable;
 - `bm25`: a dependency-free lexical baseline with deterministic tie breaking;
-- `contextmesh`: real HTTP ingestion through `/v1/events` followed by a real `/v1/query` call.
+- `contextmesh`: real HTTP ingestion through `/v1/records` followed by a real `/v1/context` call.
 
 Every mode receives the same output ceiling and uses the same chunks, each at most
 3,500 characters and 64 KiB. This prevents the literal curator's 4,000-character
@@ -23,8 +23,8 @@ quote metadata against its internal budget, so the manifest explicitly marks thi
 as **not a strict equal-effective-budget comparison**. Do not rank these operating
 points as if identical quantities of source context were available.
 
-Managed mode provisions a fresh tenant and literal graph for each case, waits for
-durable curation to finish, and records acknowledgements, graphs, packets, and
+Managed mode provisions a fresh tenant for each case, waits for
+durable curation to finish, and records acknowledgements, packets, and
 source mappings. No provider key is needed. Direct HTTP mode requires a fresh
 evaluation tenant, an owner token, and one case per invocation. An external-ID
 prefix does **not** isolate queries within a shared tenant.
@@ -62,7 +62,7 @@ python3 evals/public.py path/to/longmemeval_s.json \
 # In CI, start a fresh real ContextMesh service and tenant for each case.  The
 # service harness reads DATABASE_URL, MIGRATION_DATABASE_URL, and optionally
 # CONTEXTMESH_BINARY from the environment; this is the safest mode because a
-# shared graph cannot isolate literal claims by case_id.
+# shared tenant state cannot isolate records by case_id.
 python3 evals/public.py --dataset path/to/locomo10.json \
   --output artifacts/cm-locomo --max-cases 8 --managed-service \
   --mode no-memory --mode bm25 --mode contextmesh

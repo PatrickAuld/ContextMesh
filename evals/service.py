@@ -7,7 +7,7 @@ well as from a benchmark runner::
     with Service(mock=True) as cm:
         event_id = cm.insert("The release is Friday", "release-1")
         cm.await_idle()
-        packet = cm.request("/v1/query", {"query": "release"})
+        packet = cm.request("/v1/context", {"task": "release"})
 
 Each instance gets fresh random tenant ids.  No rows are deleted on teardown;
 this makes a failed run inspectable while preventing two concurrent runs from
@@ -30,7 +30,6 @@ import time
 from http.server import ThreadingHTTPServer
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
 from urllib.request import Request, urlopen
 import uuid
 
@@ -67,10 +66,9 @@ def _json_response(response: Any) -> Any:
 class Service:
     """Run one real ContextMesh API and worker against an isolated tenant.
 
-    ``mock`` is an opt-in conformance mode.  It starts the deterministic
-    gateway used by ``tests/e2e.py`` and therefore makes a graph ``llm``.  The
-    default has no model environment and bootstraps the literal graph, so a
-    benchmark does not accidentally spend provider tokens.
+    ``mock`` is an opt-in conformance mode using the deterministic gateway in
+    ``tests/e2e.py``. The default has no model environment and cannot spend
+    provider tokens.
     """
 
     def __init__(
@@ -115,7 +113,6 @@ class Service:
         self.finance_token = self.finance
         self.outsider_token = self.outsider
         self.url: str | None = None
-        self.graph_id: str | None = None
         self._temp: tempfile.TemporaryDirectory[str] | None = None
         self._logs: list[Any] = []
         self._servers: list[subprocess.Popen[bytes]] = []
@@ -140,7 +137,7 @@ class Service:
         env = os.environ.copy()
         env["RUST_LOG"] = env.get("RUST_LOG", "contextmesh=info")
         if not self.mock:
-            # App.bootstrap selects a literal graph when the gateway is absent.
+            # Capture and context remain available without an inference gateway.
             for key in ("CONTEXTMESH_MODEL_URL", "CONTEXTMESH_MODEL", "CONTEXTMESH_MODEL_KEY"):
                 env.pop(key, None)
         else:
@@ -171,7 +168,6 @@ class Service:
         self._start_process("serve", directory / "serve.log", config_path, listen, env)
         self._start_process("worker", directory / "worker.log", config_path, None, env)
         self._wait_for_health()
-        self.graph_id = self._active_graph()
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -281,91 +277,44 @@ class Service:
         return result
 
     def insert(
-        self,
-        text: str,
-        external_id: str,
-        revision: int = 1,
-        context: dict[str, Any] | None = None,
-        classification: str = "internal",
-        read_groups: list[str] | None = None,
-        token: str | None = None,
+        self, text: str, external_id: str, revision: int = 1, context: dict[str, Any] | None = None,
+        classification: str = "internal", read_groups: list[str] | None = None, token: str | None = None,
+        inputs: list[str] | None = None, supersedes: list[str] | None = None,
     ) -> str:
-        """Insert an event and return its stable event id."""
-        body = {"source": "eval", "external_id": external_id, "revision": revision, "text": text, "context": context or {}, "classification": classification, "read_groups": read_groups or []}
-        response = self.request("/v1/events", body, token)
-        return str(response["event_id"])
+        """Append a stable record and return its UUID (external_id is deterministic UUID input)."""
+        import uuid
+        try: rid = str(uuid.UUID(external_id))
+        except ValueError: rid = str(uuid.uuid5(uuid.NAMESPACE_URL, external_id))
+        scope = {"visibility": classification, "groups": read_groups or []}
+        if context and isinstance(context.get("scope"), dict): scope.update(context["scope"])
+        response = self.request("/v1/records", {"records": [{"id": rid, "content": text, "scope": scope,
+            "inputs": inputs or [], "supersedes": supersedes or [], "metadata": context or {}}]}, token)
+        return str(response.get("records", [{}])[0].get("id", rid))
 
     def insert_response(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        """Like :meth:`insert`, but return the complete acknowledgement."""
         text, external_id = args[:2] if len(args) >= 2 else (kwargs.pop("text"), kwargs.pop("external_id"))
-        revision = kwargs.pop("revision", args[2] if len(args) > 2 else 1)
-        context = kwargs.pop("context", None)
-        classification = kwargs.pop("classification", "internal")
-        read_groups = kwargs.pop("read_groups", None)
         token = kwargs.pop("token", None)
-        if kwargs:
-            raise TypeError(f"unexpected insert arguments: {sorted(kwargs)}")
-        body = {"source": "eval", "external_id": external_id, "revision": revision, "text": text, "context": context or {}, "classification": classification, "read_groups": read_groups or []}
-        return self.request("/v1/events", body, token)
+        return {"records": [{"id": self.insert(text, external_id, token=token)}]}
 
     def query(self, query: str, *, token: str | None = None, **options: Any) -> dict[str, Any]:
-        return self.request("/v1/query", {"query": query, **options}, token)
+        packet = self.request("/v1/context", {"task": query, **options}, token)
+        packet["memories"] = packet.get("records", [])
+        return packet
 
     def find(self, query: str, *, token: str | None = None, **options: Any) -> dict[str, Any]:
-        """Compatibility alias for the process-level test fixture."""
         return self.query(query, token=token, **options)
 
-    def graphs(self, *, token: str | None = None) -> dict[str, Any]:
-        return self.request("/v1/graphs", token=token or self.owner)
-
-    def create_graph(self, name: str, config: dict[str, Any] | None = None, *, token: str | None = None) -> str:
-        result = self.request("/v1/graphs", {"name": name, "config": config or {}}, token or self.owner)
-        return str(result["graph_id"])
-
-    def graph_edges(self, graph_id: str | None = None, entity: str = "", *, token: str | None = None) -> dict[str, Any]:
-        graph_id = graph_id or self.graph_id
-        if not graph_id:
-            raise RuntimeError("no graph id")
-        suffix = "?entity=" + quote(entity, safe="") if entity else ""
-        return self.request(f"/v1/graphs/{quote(str(graph_id), safe='')}/edges{suffix}", token=token)
-
-    def promote_graph(self, graph_id: str, *, token: str | None = None) -> dict[str, Any]:
-        return self.request(f"/v1/graphs/{quote(graph_id, safe='')}/promote", {}, token or self.owner)
-
-    def archive_graph(self, graph_id: str, *, token: str | None = None) -> dict[str, Any]:
-        return self.request(f"/v1/graphs/{quote(graph_id, safe='')}/archive", {}, token or self.owner)
-
-    def retry_graph(self, graph_id: str, *, token: str | None = None) -> dict[str, Any]:
-        return self.request(f"/v1/graphs/{quote(graph_id, safe='')}/retry", {}, token or self.owner)
 
     def await_idle(self, timeout: float = 60.0, poll_interval: float = 0.2) -> None:
-        """Wait until all this tenant's jobs finish, failing on any failed job."""
         deadline = time.monotonic() + timeout
-        last: Any = None
         while time.monotonic() < deadline:
-            if any(process.poll() is not None for process in self._servers):
-                raise RuntimeError("ContextMesh API or worker exited while awaiting idle")
-            listings = [("primary", self.graphs(token=self.owner)),
-                        ("outsider", self.graphs(token=self.outsider))]
-            failed = [(tenant, g) for tenant, listing in listings for g in listing.get("graphs", [])
-                      if int(g.get("failed", 0))]
-            if failed:
-                raise RuntimeError(f"ContextMesh jobs failed: {failed!r}")
-            if all(g.get("state") in {"ready", "archived"} and int(g.get("pending", 0)) == 0
-                   for _, listing in listings for g in listing.get("graphs", [])):
-                return
+            status = self.request("/v1/status", token=self.owner)
+            jobs = status.get("jobs", {})
+            if isinstance(jobs, Mapping):
+                if int(jobs.get("failed", 0) or 0): raise RuntimeError("ContextMesh curation failed")
+                if not any(int(jobs.get(k, 0) or 0) for k in ("pending", "running")): return
+            elif isinstance(jobs, list) and not any(x.get("state") in ("pending", "running") for x in jobs if isinstance(x, Mapping)): return
             time.sleep(poll_interval)
-        raise TimeoutError(f"ContextMesh did not become idle within {timeout}s: {last!r}")
-
-    def _active_graph(self) -> str:
-        deadline = time.monotonic() + self.startup_timeout
-        while time.monotonic() < deadline:
-            listing = self.graphs()
-            for graph in listing.get("graphs", []):
-                if graph.get("active"):
-                    return str(graph["id"])
-            time.sleep(0.1)
-        raise TimeoutError("ContextMesh bootstrap did not create an active graph")
-
+        raise TimeoutError("ContextMesh did not become idle")
 
 __all__ = ["RequestError", "Service"]

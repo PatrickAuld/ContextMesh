@@ -1,71 +1,55 @@
 # Architecture
 
-## Deployment shape
+ContextMesh has three pieces: an immutable record log, a curator that appends derived records, and a context builder that selects records for a task. PostgreSQL stores the log and operational coordination. There is no separate graph lifecycle, claim store, session state machine, or persisted context receipt.
 
-ContextMesh is one Rust package with narrow modules and three runtime modes. `run` combines API and workers for initial adoption. `serve` and `worker` support separate process pools against the same PostgreSQL database. No Kafka, Redis, dedicated graph database, or workflow orchestrator is required.
+## One record model
 
-PostgreSQL owns source evidence, source revisions, graph metadata, projected claims and edges, leased jobs, identity bindings, release policies, receipts, and audit records. Transactions tie acceptance to work scheduling and tie derived claims to job completion. Full-text and entity-array indexes provide candidate retrieval; explicit relations retain source lineage.
+Conversation messages, working notes, and consolidated knowledge use the same record shape. A record has an immutable ID, authenticated author and delegated agent attribution, recording time, content, scope, inputs, supporting references, supersession references, and bounded harness metadata. Generated records additionally identify their model and extraction configuration.
 
-This is horizontal application and worker scaling, not a distributed PostgreSQL writer. The initial target is dozens of people and dozens of requests per second. Larger deployments should measure worker throughput, connection demand, query latency, and tenant lock contention. The current code has not been load-qualified for tens of thousands of simultaneous requests. Thousands of mostly idle/asynchronous agents are distinct from that request rate.
+A conversation is a grouping key, not a managed lifecycle. Project and conversation labels help retrieval; they never grant access. Original messages normally have no inputs. A generated note refers to every record supplied to its inference call, even if only some records support its conclusions. Citations identify exact substrings in those inputs. Quote matching establishes provenance, not truth.
 
-## Evidence and projections
+Appending a correction or revised note leaves earlier records intact. Supersession requires authority over the target and is an explicit relationship; later timestamps never overwrite another person's conclusion. Competing successors can coexist. Default context excludes superseded records and stale derivations, but authorized callers can inspect historical records by ID. A replacement remains usable even though it explicitly includes the record it supersedes in its ancestry.
 
-An event is an attributed source assertion, not an assertion that its content is true. Its identity is `(tenant, source, external_id, revision)`. Same-identity retries must have the same payload. New revisions are monotonic and preserve previous source content. Only the current, non-redacted revision participates in retrieval and rebuilds.
+## Lineage and access
 
-Claims contain a source quote, intent, stable entities, applicability predicates, version dependencies, and an optional conflict slot. Explicit edges reference a claim and therefore an event. Associations can be regenerated without changing source history. Workers never decide tenant identity or disclosure labels.
+The input manifest is attached by the service, not chosen by the model. Model-generated supports must reference inputs and contain exact source quotes. References always target immutable record IDs. Derived records retain transitive ancestry through relational dependency links; summarizing a summary never creates independent corroboration.
 
-Graph configuration records extraction mode, resolved model, temperature, instructions, and extractor version. Configurations are immutable. Create another graph to change them. Runtime gateway credentials and addresses stay outside graph metadata; operators must preserve gateway routing/model-version identity when reproducibility matters. A gateway alias is not an immutable model binary.
+Authorization checks the record and all its transitive inputs. A derived record's requested audience cannot override an input's restrictions. Scope filters select information within the caller's permissions. Bounded traversal fails closed rather than returning partially checked lineage. The same canonical availability rules govern retrieval and derivation.
 
-Creating a graph records an input sequence watermark under the same tenant lock used for ingestion. Workers backfill up to 500 inputs per transaction. Events accepted after graph creation are enqueued directly for every maintained graph. Uniqueness on `(tenant, graph, event)` removes overlap. A graph becomes ready after backfill and derivation finish. Promotion requires no pending, running, or failed jobs and atomically switches the tenant's active graph. Archived graphs remain inspectable, stop receiving work, and cannot be promoted without rebuilding.
+Personal is the default audience. Explicit internal records are readable within the tenant. Restricted records require authorized group membership. Administrative access and delegated identities remain separate: agents inherit the acting person's current stored groups and do not gain administrative privileges.
 
-Rebuilds run extraction again over eligible evidence, possibly with different models or instructions. Existing graph decisions remain inspectable. This release does not contain a separate deterministic decision-replay importer or an A/B testing product.
+All tenant-owned queries include an explicit tenant predicate and run in a transaction with forced PostgreSQL row-level security. Runtime roles cannot be superusers or bypass RLS. Tenant identity and authorship come from authentication, not request bodies.
 
-## Durable work
+## Capture and idempotency
 
-Workers claim jobs with PostgreSQL `FOR UPDATE SKIP LOCKED`. Each attempt receives a unique lease token and a 60-second lease. Inference requests have a 40-second deadline and occur outside transactions. Completion checks the lease token, deadline, source currentness/redaction, and graph state before committing claims and marking the job complete together.
+The public append API accepts an ordered batch. All records commit together or none do. References may point to existing authorized records or earlier records in the same batch. A stable ID with the same canonical payload and person is an idempotent retry; different content conflicts. Delegated-token rotation does not change the logical person who authored the record. A redacted ID cannot be reused.
 
-Crashes leave leases available for reclamation. Five failed attempts move a job to `failed`; retry delays grow exponentially and owner actions can retry a graph's failed jobs. Expired final attempts become failed rather than remaining stuck forever. Poisoned inputs do not block other jobs. Graph promotion rejects incomplete work.
+The harness persists unsent batches in its local outbox and retries using the same IDs. There is no server-side transcript synchronization protocol. Messages, tool results, explicit notes, reasoning summaries, and compaction summaries enter through the same API. Integration metadata preserves role/channel distinctions and original message identities. Previously injected memory must retain its input references rather than being recaptured as independent evidence.
 
-Worker processes rotate configured tenants between jobs. This provides basic fairness, not hard per-tenant resource reservations. API query concurrency is capped at 32 per process; ingestion rejects a tenant backlog of 100,000 pending/running jobs. At most eight graph versions are maintained simultaneously. Scale workers when curation backlog grows, and account for work amplification from multiple maintained graphs.
+## Curation
 
-## Retrieval
+When an inference gateway is configured, source appends schedule durable curation jobs. A worker assembles chronological conversation material and relevant existing notes within explicit bounds, calls the gateway outside a database transaction, then appends derived records and completes the job atomically. Every output retains the actual input manifest and extraction configuration. Coverage metadata makes bounded processing visible; a partial window is not represented as a complete transcript.
 
-1. Authenticate the person or delegated agent; determine tenant and current groups.
-2. Select an explicit graph or the tenant's active graph and record the security epoch.
-3. Retrieve up to 60 authorized full-text/entity candidates per search. Enforce source currentness, redaction, group visibility, and applicability before providing evidence to a planner.
-4. Expand entity associations. With `agentic: true`, a configured model may reformulate the query or select entity identifiers for up to two additional searches.
-5. Mark changed or unknown exact-version dependencies `revalidate`. Surface multiple claims in declared conflict slots rather than silently choosing one.
-6. Optionally evaluate matching approved release policies in a separate privileged inference call.
-7. Bound selected memory and guidance content, recheck the security epoch, and commit a content-free query receipt.
+The same operation supports extraction and consolidation: read records, produce a useful note, append it. There is no promotion pipeline between record classes. Derived outputs do not recursively schedule themselves. Without a gateway, capture and context retrieval operate over original records; the service does not pretend literal copies are model extraction.
 
-The planner only sees evidence the requesting identity may read. A release evaluator sees only the evidence explicitly named by an approved policy and cannot pass its free-form response through. The final packet separates directly readable memories from approved guidance.
+Jobs use leases, retries, and content-free failure codes. Before publishing inference output the worker rechecks its lease and source/security validity. Queue state is operational coordination, not the semantic state of knowledge. Restarting workers does not mutate record history.
 
-Retrieval uses PostgreSQL full-text indexes and explicit entity association. This release does not include an embedding service, ANN index, or arbitrary external-index federation. The retrieval and inference modules are the extension boundaries for those capabilities. The `max_chars` budget covers serialized selected memories and approved guidance; envelope, trace, and duplicated `context_text` are additional response bytes. It is not a tokenizer limit.
+## Context preparation
 
-## Identity and future authorization
+`POST /v1/context` accepts a task, optional scope filters and starting records, and a budget. It selects authorized usable records, follows relevant lineage within bounds, and returns sourced context plus the selected immutable records. No durable session or receipt is created. The response exposes a watermark and truncation indication; absence of a result is not proof that no relevant knowledge exists.
 
-A tenant maps to one configured OIDC issuer; tokens must match its configured audience and RS256 JWKS. Okta custom authorization-server access tokens carry the user's `sub` and groups. Identity-provider groups are used as supplied; ContextMesh does not invent management hierarchy or maintain a competing organization chart. Distinct organizations should use distinct issuer configurations in this version.
+Context is supplied as data to the harness, never as higher-priority instructions. Generated text and captured prompts remain untrusted. The context builder checks the tenant security epoch again before returning so concurrent redaction, reclassification, or revocation cannot silently serve an obsolete authorization snapshot.
 
-Agents receive short-lived opaque credentials bound to a tenant and person. Each request resolves the person's stored groups and enabled status. Delegated agents cannot delegate again or perform owner operations, even when the person belongs to the owner group. Refreshing the person's OIDC session updates their groups; local suspension is immediate. Okta suspension/group changes are not discovered until another token is processed or the operator synchronizes status. There is no SCIM/event-hook synchronization in this release.
+Approved release policies remain a separate administrative boundary. A privileged evaluator may inspect exactly the approved evidence and select one of a finite set of approved output strings, or abstain. Free-form restricted output never reaches the caller. Correcting, reclassifying, or redacting supporting evidence invalidates dependent approvals.
 
-Every tenant-data transaction sets `app.tenant_id` locally. Tables force row-level security and SQL also scopes tenant IDs. Transaction-local state cannot leak between pooled connections. Owner migration credentials are separate from runtime credentials. The runtime must not be a superuser or possess BYPASSRLS. See [PostgreSQL row security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html).
+## Privacy exceptions
 
-Future ACL work can replace `Identity::can_read` and the matching SQL predicates with action/resource policies. Preserve those boundaries on search candidates, graph traversal, sources, receipts, planner inputs, releases, and audit. Raw access, permission to compute over evidence, and permission to disclose derived outputs are separate capabilities.
+Immutability has two explicit exceptions: access reclassification and redaction. Reclassification changes only access metadata. Redaction clears payloads and invalidates descendants through the complete dependency graph; stale workers and replay cannot restore them. Content-free identifiers remain as tombstones and audit evidence.
 
-## Approved release policies
+The guarantee covers service retrievability, including rebuilds and derived content. Data already delivered to clients or inference providers cannot be recalled. Backup restoration must reapply later deletion records before reopening access. See [operations](operations.md).
 
-An owner approves a policy containing exact evidence IDs, an intended purpose, audience groups, a selection instruction, and a finite map of allowed output keys to allowed output text. A dedicated inference call may select a key or abstain. Only an exact approved text is returned; unknown keys, provider errors, and malformed output abstain. Source IDs, policy internals, and restricted reasoning are not included in the caller's packet.
+## Deployment
 
-This deliberately supports bounded guidance such as an approved capacity envelope. It does not claim arbitrary generated prose can safely hide sensitive inputs. Selection among outputs itself conveys information; approving the policy explicitly authorizes that disclosure. Owners must consider repeated queries and combinations of outputs. Different authorized agents can be introduced behind this policy boundary later without granting raw access to the calling agent.
+One Rust binary can run HTTP and workers together, or as separate process pools against PostgreSQL. No Kafka, Redis, dedicated graph database, or workflow orchestrator is required. Search and lineage structures are derived from the record log. There is no claim that model re-execution reproduces identical output; retain the original generated record and its derivation metadata for audit.
 
-Corrections, retroactive classification, and redaction disable affected policies. Reapproval creates a new policy with current evidence. A policy revocation changes the security epoch immediately.
-
-## Redaction and audit
-
-Redaction applies to all revisions of a source, across every graph. The transaction clears raw body/context/hash, deletes derived claims and edges, cancels queued/in-flight jobs, clears dependent release payloads, disables those policies, and increments the tenant security epoch. A tombstone prevents reusing that source identity. Rebuilds and workers check current redaction state; receipts resolve only currently visible surviving claim IDs.
-
-Query completion compares the epoch sampled before retrieval with the epoch under the final tenant lock. A changed epoch returns `409 context_changed_retry`. Queries starting after committed redaction cannot retrieve the removed payload. Data already delivered to clients or an inference gateway cannot be recalled; operators own those systems' retention. An HTTP response committed before redaction may still be in transit. This is an application retrievability guarantee, not physical-media erasure or a universal network-delivery guarantee.
-
-The audit log records actor, delegated agent, action, target IDs, timestamps, and content-free operational metadata. It rejects update/delete, and the runtime is not granted those privileges. Owner lineage lookup connects a claim to its exact quote, source revision, graph configuration, and job. Redacted payloads are intentionally unavailable even to owners.
-
-Backups may retain historical bytes. Restore procedures must preserve and reapply later redactions before opening service access; see the operator runbook. An independently restored database from before a redaction cannot infer that a later deletion happened.
+Initial capacity targets remain dozens of people and dozens of requests per second. Worker throughput, lineage depth, and query candidate limits need workload measurements before company-wide expansion. Thousands of asynchronous agents do not imply thousands of simultaneous inference requests.

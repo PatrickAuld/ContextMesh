@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -474,7 +475,7 @@ def _safe_external_id(namespace: str, case_id: str, source_id: str, chunk_index:
 
 
 class ContextMeshHTTPAdapter(RetrievalAdapter):
-    """Real HTTP adapter for `/v1/events` and `/v1/query`.
+    """Real HTTP adapter for `/v1/records` and `/v1/context`.
 
     It intentionally has no fake response or local score path.  Ingestion and
     retrieval failures are represented in the result and surfaced in artifacts.
@@ -495,6 +496,7 @@ class ContextMeshHTTPAdapter(RetrievalAdapter):
         self.wait_timeout = wait_timeout
         self.require_fresh_case = require_fresh_case
         self._source_to_external: dict[str, list[str]] = {}
+        self._record_to_source: dict[str, str] = {}
         self._last_case_id: str | None = None
 
     def _request(self, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -554,19 +556,7 @@ class ContextMeshHTTPAdapter(RetrievalAdapter):
             else:
                 raise RuntimeError("ContextMesh status has unsupported jobs shape")
             if drained:
-                graphs = self._get("/v1/graphs")
-                rows = graphs.get("graphs")
-                if isinstance(rows, list):
-                    active = [x for x in rows if isinstance(x, Mapping) and x.get("active") is True]
-                    if not active or any(x.get("state") != "ready" or int(x.get("pending", 0) or 0) or int(x.get("failed", 0) or 0) for x in active):
-                        drained = False
-                    else:
-                        last = dict(last)
-                        last["graphs"] = rows
-                else:
-                    raise RuntimeError("ContextMesh graph listing is malformed")
-                if drained:
-                    return last
+                return last
             if time.monotonic() >= deadline:
                 raise RuntimeError("ContextMesh curation watermark timeout")
             time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
@@ -575,25 +565,20 @@ class ContextMeshHTTPAdapter(RetrievalAdapter):
         acknowledgements: list[Mapping[str, Any]] = []
         mapping: list[Mapping[str, Any]] = []
         self._source_to_external = {}
+        self._record_to_source = {}
         for item in case.history:
             chunks = source_chunks(item.text, max_bytes=self.max_source_bytes)
             self._source_to_external[item.source_id] = []
             byte_offset = 0
             for index, chunk in enumerate(chunks):
                 external_id = _safe_external_id(self.namespace, case.case_id, item.source_id, index)
-                payload = {
-                    "source": "public-eval",
-                    "external_id": external_id,
-                    "revision": 1,
-                    "text": chunk,
-                    "context": {"benchmark": case.benchmark, "case_id": case.case_id, "source_id": item.source_id, "session_id": item.session_id, "chunk_index": index, "chunk_count": len(chunks)},
-                    "classification": "internal",
-                    "read_groups": [],
-                }
-                ack = self._request("/v1/events", payload)
+                record_id = str(uuid.uuid5(uuid.NAMESPACE_URL, external_id))
+                payload = {"records": [{"id": record_id, "content": chunk, "metadata": {"benchmark": case.benchmark, "case_id": case.case_id, "source_id": item.source_id, "session_id": item.session_id, "chunk_index": index, "chunk_count": len(chunks)}}]}
+                ack = self._request("/v1/records", payload)
                 acknowledgements.append(ack)
                 self._source_to_external[item.source_id].append(external_id)
-                mapping.append({"source_id": item.source_id, "external_id": external_id, "chunk_index": index, "chunk_count": len(chunks), "byte_start": byte_offset, "byte_end": byte_offset + len(chunk.encode("utf-8")), "event_id": ack.get("event_id")})
+                self._record_to_source[record_id] = item.source_id
+                mapping.append({"source_id": item.source_id, "external_id": external_id, "chunk_index": index, "chunk_count": len(chunks), "byte_start": byte_offset, "byte_end": byte_offset + len(chunk.encode("utf-8")), "record_id": ack.get("records", [{}])[0].get("id", record_id)})
                 byte_offset += len(chunk.encode("utf-8"))
         return acknowledgements, mapping
 
@@ -606,9 +591,9 @@ class ContextMeshHTTPAdapter(RetrievalAdapter):
             self._last_case_id = case.case_id
             acks, mapping = self.ingest(case)
             watermark = self.await_curation()
-            packet = self._request("/v1/query", {"query": case.question, "context": {"benchmark": case.benchmark, "case_id": case.case_id}, "max_chars": budget.max_context_chars})
+            packet = self._request("/v1/context", {"task": case.question, "max_tokens": budget.max_context_chars, "purpose": f"public-eval/{case.benchmark}/{case.case_id}"})
             self._last_case_id = case.case_id
-            raw = packet.get("memories", [])
+            raw = packet.get("records", [])
             if not isinstance(raw, list):
                 raise RuntimeError("ContextMesh packet memories is not a list")
             docs: list[RetrievedDocument] = []
@@ -616,10 +601,16 @@ class ContextMeshHTTPAdapter(RetrievalAdapter):
                 if not isinstance(memory, Mapping):
                     continue
                 source = memory.get("source") if isinstance(memory.get("source"), Mapping) else {}
-                sid = source.get("external_id") or memory.get("external_id") or str(memory.get("event_id") or memory.get("id") or "unknown")
+                metadata = memory.get("metadata") if isinstance(memory.get("metadata"), Mapping) else {}
+                cited_source = next((self._record_to_source[support.get("record_id")]
+                                     for support in memory.get("supports", [])
+                                     if support.get("record_id") in self._record_to_source), None)
+                sid = (source.get("external_id") or memory.get("external_id") or metadata.get("source_id")
+                       or cited_source
+                       or str(memory.get("record_id") or memory.get("id") or "unknown"))
                 # Map chunk external IDs back to canonical dataset source IDs.
                 source_id = next((k for k, values in self._source_to_external.items() if sid in values), str(sid))
-                text = str(memory.get("text") or memory.get("quote") or "")
+                text = str(memory.get("content") or memory.get("text") or memory.get("quote") or "")
                 if text:
                     docs.append(RetrievedDocument(source_id, text, 0.0, {"memory": dict(memory)}))
             selected, context = _pack(docs, budget)

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101710">
   <meta name="description" content="ContextMesh is a shared memory layer for agents. Turn conversations, decisions, and outcomes into relevant, sourced context across your workflows.">
   <meta property="og:title" content="ContextMesh — Every agent. A shared understanding.">
-  <meta property="og:description" content="Shared agent memory, a knowledge graph, and a system of record. Capture what matters. Bring it into the next task.">
+  <meta property="og:description" content="Shared agent memory, a connected knowledge, and a system of record. Capture what matters. Bring it into the next task.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://patrickauld.github.io/ContextMesh/">
   <link rel="canonical" href="https://patrickauld.github.io/ContextMesh/">
@@ -38,7 +38,7 @@
           <div class="figure-heading"><span>ONE MEMORY. MANY WORKFLOWS.</span><span aria-hidden="true">CM / 01</span></div>
           <svg class="mesh" viewBox="0 0 530 480" role="img" aria-labelledby="mesh-title mesh-desc">
             <title id="mesh-title">Shared context across agent workflows</title>
-            <desc id="mesh-desc">Conversations, development work, and experiment outcomes connect through ContextMesh. ContextMesh preserves evidence, curates claims, and retrieves relevant context for subsequent agent work.</desc>
+            <desc id="mesh-desc">Conversations, development work, and experiment outcomes connect through ContextMesh. ContextMesh preserves evidence, curates notes, and retrieves relevant context for subsequent agent work.</desc>
             <defs><pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#45513e"/></pattern><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#a5c578"/></marker></defs>
             <rect width="530" height="480" fill="url(#dots)"/>
             <g class="mesh-orbits" fill="none" stroke="#394531"><circle cx="265" cy="246" r="94"/><circle cx="265" cy="246" r="154"/><path d="M15 246h500M265 15v450" stroke-dasharray="3 8"/></g>
@@ -51,7 +51,7 @@
           <figcaption><span class="caption-line" aria-hidden="true"></span>Knowledge travels. Its context comes with it.</figcaption>
         </figure>
       </div>
-      <div class="capabilities wrap" aria-label="Core concepts"><span>Shared agent memory</span><span>Knowledge graph</span><span>Generated wiki</span><span>System of record</span></div>
+      <div class="capabilities wrap" aria-label="Core concepts"><span>Shared agent memory</span><span>Knowledge graph</span><span>Working notes</span><span>System of record</span></div>
     </section>
 
     <section class="intro section wrap">
@@ -59,7 +59,7 @@
       <div class="split-heading"><h2>Learn it once.<br><span class="muted">Use it where it matters.</span></h2><p>A procedure explained in Slack. A hard-won experiment result. A change to a library’s assumptions. ContextMesh turns scattered knowledge into sourced, applicable context for the agent doing the work.</p></div>
       <div class="principles">
         <article><span class="index">01 / CAPTURE</span><h3>Let work leave a memory.</h3><p>Capture visible conversations, tool results, and outcomes through integrations. Agents can also add knowledge explicitly—without becoming full-time wiki editors.</p></article>
-        <article><span class="index">02 / UNDERSTAND</span><h3>Keep the conditions attached.</h3><p>Preserve where a claim came from, what it means, when it applies, and which versions it depends on. Surface disagreements and stale assumptions.</p></article>
+        <article><span class="index">02 / UNDERSTAND</span><h3>Keep the conditions attached.</h3><p>Preserve where a note came from and the context behind it. Keep corrections linked to the earlier work.</p></article>
         <article><span class="index">03 / APPLY</span><h3>Bring it into the next step.</h3><p>Retrieve relevant guidance for a task, traverse related knowledge, and return cited context that a harness can include in the agent’s next request.</p></article>
       </div>
     </section>
@@ -81,8 +81,8 @@
           <div class="example-flow"><div class="example-label">ILLUSTRATIVE WORKFLOW</div><div class="message"><span class="message-source">ML PIPELINE · RECORDED EVIDENCE</span><p>Recipe passed evaluation on a specific model and library build.</p></div><div class="transfer"><span></span> Compare version fingerprints <span></span></div><div class="message result"><span class="message-source">NEXT RUN · LIBRARY CHANGED</span><p>A familiar model. A different dependency.</p><div class="context-result"><span>Revalidation required</span>Revalidate and broaden recipe search.<small>Previous success is evidence with conditions.</small></div></div></div>
         </article>
         <article class="scenario" id="personal" aria-labelledby="tab-personal">
-          <div class="scenario-copy"><span class="pill">PROJECT HISTORY → CONTINUITY</span><h3>Pick up the work.<br>Keep the reasoning behind it.</h3><p>Capture research notes, project decisions, and status with person and project context. Return to a task with the relevant history and a wiki view derived from the same underlying claims.</p><p class="outcome">Personal context shapes discovery without flooding unrelated work.</p></div>
-          <div class="example-flow"><div class="example-label">ILLUSTRATIVE WORKFLOW</div><div class="message"><span class="message-source">RESEARCH SESSION · PROJECT NOTE</span><p>“We’re testing the simpler design first. Revisit graph storage after measuring traversal needs.”</p></div><div class="transfer"><span></span> Preserve decision &amp; project context <span></span></div><div class="message result"><span class="message-source">LATER SESSION · SAME PROJECT</span><p>Plan the next implementation step.</p><div class="context-result"><span>Relevant project history</span>Measure traversal before choosing storage.<small>Personal discovery is contextual, not a privacy ACL.</small></div></div></div>
+          <div class="scenario-copy"><span class="pill">PROJECT HISTORY → CONTINUITY</span><h3>Pick up the work.<br>Keep the reasoning behind it.</h3><p>Capture research notes, project decisions, and status with person and project context. Return to a task with the relevant history and notes linked to the original conversations.</p><p class="outcome">Personal context shapes discovery without flooding unrelated work.</p></div>
+          <div class="example-flow"><div class="example-label">ILLUSTRATIVE WORKFLOW</div><div class="message"><span class="message-source">RESEARCH SESSION · PROJECT NOTE</span><p>“We’re testing the simpler design first. Revisit graph storage after measuring traversal needs.”</p></div><div class="transfer"><span></span> Preserve decision &amp; project context <span></span></div><div class="message result"><span class="message-source">LATER SESSION · SAME PROJECT</span><p>Plan the next implementation step.</p><div class="context-result"><span>Relevant project history</span>Measure traversal before choosing storage.<small>Personal notes remain private unless explicitly shared.</small></div></div></div>
         </article>
       </div>
     </section>
@@ -91,42 +91,27 @@
       <div class="section-top"><div><p class="eyebrow">HIGH-LEVEL ARCHITECTURE</p><h2>Evidence at the core.<br>Context at the edge.</h2></div><p class="section-aside">Keep source history durable. Derive the knowledge. Assemble what the next task needs.</p></div>
       <div class="architecture-grid">
         <div class="architecture-flow" aria-label="Architecture: capture, preserve, curate, and retrieve">
-          <article><div class="stage-number">01</div><div><h3>Capture the work</h3><p>Harness hooks, explicit inserts, and source adapters send identity-bound events.</p><span class="stage-meta">Conversations · Tool results · Outcomes</span></div></article>
-          <article><div class="stage-number">02</div><div><h3>Preserve the evidence</h3><p>An append-only event log retains source history. Curation decisions are recorded for replay.</p><span class="stage-meta">Provenance · Intent · Context</span></div></article>
-          <article><div class="stage-number">03</div><div><h3>Curate connected knowledge</h3><p>Bounded workers propose sourced claims. Validation checks identity, source quotes, and structure before commit.</p><span class="stage-meta">Claims · Entity associations · Wiki views</span></div></article>
-          <article><div class="stage-number">04</div><div><h3>Compile working context</h3><p>Search, expand associations, inspect evidence, and return a cited memory packet. PostgreSQL stores the evidence and graph projections.</p><span class="stage-meta">Guidance · Conflicts · Revalidation · Receipt</span></div></article>
+          <article><div class="stage-number">01</div><div><h3>Capture the work</h3><p>Harness hooks capture conversations, prompts, and tool results with their source identities.</p><span class="stage-meta">Conversations · Tool results · Outcomes</span></div></article>
+          <article><div class="stage-number">02</div><div><h3>Preserve the evidence</h3><p>An immutable record log retains original content and the inputs behind every generated note.</p><span class="stage-meta">Provenance · Intent · Context</span></div></article>
+          <article><div class="stage-number">03</div><div><h3>Curate connected knowledge</h3><p>Workers read conversations and existing notes, then append useful context with complete input lineage.</p><span class="stage-meta">Conversations · Working notes · Shared knowledge</span></div></article>
+          <article><div class="stage-number">04</div><div><h3>Compile working context</h3><p>Search relevant records and return authorized, sourced context for the next task.</p><span class="stage-meta">Task context · Source references · Shared notes</span></div></article>
           <div class="feedback-line"><span aria-hidden="true">↳</span> Agent actions and evaluated outcomes become new evidence.</div>
         </div>
-        <aside class="claim-card"><span class="index">THE UNIT OF MEMORY</span><h3>A claim.<br>With its conditions.</h3><p class="claim-quote">“Use matched cohorts when comparing exposure.”</p><dl><div><dt>Source</dt><dd>Who said it, and where</dd></div><div><dt>Intent</dt><dd>Guidance, evidence, or an observation</dd></div><div><dt>Applicability</dt><dd>The tasks and entities it concerns</dd></div><div><dt>Dependencies</dt><dd>The versions it relies on</dd></div><div><dt>History</dt><dd>Validity, corrections, and conflicts</dd></div></dl><p class="claim-footer">Relevance and authority are independent. Repetition alone doesn’t make a claim policy.</p></aside>
+        <aside class="claim-card"><span class="index">THE UNIT OF MEMORY</span><h3>A record.<br>With its lineage.</h3><p class="claim-quote">“Use matched cohorts when comparing exposure.”</p><dl><div><dt>Source</dt><dd>Who said it, and where</dd></div><div><dt>Inputs</dt><dd>Every record used to produce it</dd></div><div><dt>Scope</dt><dd>The conversation and project it concerns</dd></div><div><dt>Access</dt><dd>Who may read it and its inputs</dd></div><div><dt>History</dt><dd>Explicit corrections and earlier versions</dd></div></dl><p class="claim-footer">Relevance and authority are independent. Repetition alone doesn’t make a claim policy.</p></aside>
       </div>
     </section>
 
     <section id="usage" class="usage dark section">
       <div class="wrap usage-grid">
-        <div><p class="eyebrow">FITS AROUND YOUR AGENTS</p><h2>Capture in the background.<br><em>Retrieve before the work.</em></h2><p class="usage-intro">Use the HTTP API, Rust client, or MCP tools. Connect harness hooks when you want retrieval to happen at the right moment automatically.</p><ol class="usage-steps"><li><span>1</span><div><h3>Connect a source</h3><p>Bind a client to an identity and supply stable project, team, and entity context.</p></div></li><li><span>2</span><div><h3>Let curation run</h3><p>Events are captured durably. Workers derive knowledge asynchronously, using an inference gateway when configured.</p></div></li><li><span>3</span><div><h3>Retrieve and inject</h3><p>Before a relevant agent step, request a memory packet and add its sourced context to the model request.</p></div></li></ol></div>
-        <div class="code-column"><div class="code-window"><div class="code-heading"><span>HTTP API · capture + retrieve</span><button type="button" class="copy-button" aria-label="Copy HTTP example" hidden>Copy</button></div><pre tabindex="0" aria-label="HTTP integration example"><code id="sdk-code"># Set CONTEXTMESH_TOKEN to your delegated token.
-export CONTEXTMESH_URL=http://127.0.0.1:8787
+        <div><p class="eyebrow">FITS AROUND YOUR AGENTS</p><h2>Capture in the background.<br><em>Retrieve before the work.</em></h2><p class="usage-intro">Connect the transcript adapter to your harness for automatic capture and context preparation. MCP tools support optional explicit searches.</p><ol class="usage-steps"><li><span>1</span><div><h3>Connect a source</h3><p>Bind a client to an identity and supply stable project, team, and entity context.</p></div></li><li><span>2</span><div><h3>Let curation run</h3><p>Records are captured durably. Workers derive knowledge asynchronously, using an inference gateway when configured.</p></div></li><li><span>3</span><div><h3>Retrieve and inject</h3><p>Before a relevant agent step, request a memory packet and add its sourced context to the model request.</p></div></li></ol></div>
+        <div class="code-column"><div class="code-window"><div class="code-heading"><span>Harness CLI · capture + context</span><button type="button" class="copy-button" aria-label="Copy harness example" hidden>Copy</button></div><pre tabindex="0" aria-label="Harness integration example"><code id="sdk-code">export CONTEXTMESH_URL=http://127.0.0.1:8787
 
-# Capture evidence with a stable source identity.
-curl -fsS &quot;$CONTEXTMESH_URL/v1/events&quot; \
-  -H &quot;Authorization: Bearer $CONTEXTMESH_TOKEN&quot; \
-  -H &#x27;Content-Type: application/json&#x27; \
-  -d &#x27;{
-    &quot;source&quot;: &quot;harness&quot;,
-    &quot;external_id&quot;: &quot;message-1&quot;,
-    &quot;revision&quot;: 1,
-    &quot;text&quot;: &quot;Compare exposure within matched cohorts.&quot;,
-    &quot;context&quot;: {&quot;entities&quot;: [&quot;type:Exposure&quot;]}
-  }&#x27;
+contextmesh capture --conversation investigation-1 \
+  --project discovery --outbox .contextmesh-outbox \
+  transcript.jsonl
 
-# Retrieve before the next relevant agent step.
-curl -fsS &quot;$CONTEXTMESH_URL/v1/query&quot; \
-  -H &quot;Authorization: Bearer $CONTEXTMESH_TOKEN&quot; \
-  -H &#x27;Content-Type: application/json&#x27; \
-  -d &#x27;{
-    &quot;query&quot;: &quot;Build an exposure regression investigator&quot;,
-    &quot;entities&quot;: [&quot;type:Exposure&quot;]
-  }&#x27;</code></pre><div class="code-footer">Insert <code>context_text</code> as sourced data in the next model request.</div></div><p class="code-note">Assumes a running service and delegated token. Curation is asynchronous: an immediate read may not include the new event.</p><div class="integration-list"><span>HTTP API</span><span>Rust client</span><span>MCP tools</span><span>Durable outbox</span><span>Operational CLI</span></div><p class="integration-note">MCP provides tools; automatic use depends on the host integration. <a href="./docs/api/">Read the integration guide ↗</a></p><p class="copy-status" role="status" aria-live="polite"></p></div>
+contextmesh context --project discovery \
+  &quot;Continue the exposure investigation&quot;</code></pre><div class="code-footer">Insert <code>context_text</code> as sourced data in the next model request.</div></div><p class="code-note">Assumes a running service and delegated token. Curation is asynchronous: an immediate read may not include the new note.</p><div class="integration-list"><span>HTTP API</span><span>Rust client</span><span>MCP tools</span><span>Durable outbox</span><span>Operational CLI</span></div><p class="integration-note">MCP provides tools; automatic use depends on the host integration. <a href="./docs/api/">Read the integration guide ↗</a></p><p class="copy-status" role="status" aria-live="polite"></p></div>
       </div>
     </section>
 
