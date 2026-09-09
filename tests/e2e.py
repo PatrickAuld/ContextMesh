@@ -482,10 +482,17 @@ class SystemTests(unittest.TestCase):
         Gateway.gates[marker].set()
         eventually(
             lambda: not any(
-                j.get("record_id") == source
+                j.get("record_id") in (source, child)
                 for j in self.call("/v1/jobs", token=ADMIN)["jobs"]
             )
         )
+        job = self.sql(
+            f"BEGIN; SET LOCAL app.tenant_id='{TENANT}'; "
+            f"SELECT state,error_code,lease_until IS NULL FROM jobs "
+            f"WHERE tenant_id='{TENANT}' AND record_id='{source}'; COMMIT;",
+            owner=True,
+        )
+        self.assertEqual(job.splitlines()[-1], "cancelled|source_unavailable|t")
         for rid in (source, child):
             self.call("/v1/records/" + rid, token=ADMIN, code=404)
         self.assertNotIn(marker, json.dumps(self.context("redaction", ADMIN)))

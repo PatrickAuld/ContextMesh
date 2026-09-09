@@ -476,6 +476,11 @@ pub async fn redact(pool: &PgPool, who: &Identity, id: Uuid) -> Result<()> {
         .bind(&affected)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("UPDATE jobs SET state='cancelled',error_code='source_unavailable',lease_id=NULL,lease_until=NULL WHERE tenant_id=$1 AND record_id=ANY($2) AND state IN ('pending','running')")
+        .bind(who.tenant)
+        .bind(&affected)
+        .execute(&mut *tx)
+        .await?;
     invalidate_policies(&mut tx, who.tenant, &affected).await?;
     bump_epoch(&mut tx, who.tenant).await?;
     db::audit(

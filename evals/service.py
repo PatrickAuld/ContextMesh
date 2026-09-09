@@ -28,7 +28,7 @@ import tempfile
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import uuid
